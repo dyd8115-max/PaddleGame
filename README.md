@@ -117,3 +117,11 @@ python tools/compose_music.py resources
 - `build_sprites.py`: `assets`의 원본 시트 세 장을 GDI에서 바로 쓸 수 있는 BMP 한 장으로 합칩니다. 마젠타색이 투명색입니다.
 - `build_backgrounds.py`: `assets/backgrounds`의 그림을 3:4로 자르고, 공과 벽돌이 잘 보이도록 어둡게 한 뒤 한 장으로 합칩니다.
 - `compose_music.py`: 스크립트 안에 적힌 악보로 배경음악과 효과음 4종을 만듭니다. 음이나 빠르기를 고치면 새 음악이 만들어집니다.
+
+---
+
+## 그림과 소리 제작
+
+- **캐릭터**: 로컬 PC에서 ComfyUI 워크플로를 직접 구성해 만들었습니다. 캐릭터 한 장을 마젠타 배경으로 그린 뒤, WAN 영상 생성 모델로 걷기 동작 영상을 만들고, 직접 만든 노드로 영상을 도트 프레임 16장의 스프라이트 시트로 변환했습니다.
+- **배경**: 이미지 생성 AI로 도트 판타지 배경을 만든 뒤, `tools/build_backgrounds.py`로 게임 비율과 밝기에 맞게 가공했습니다.
+- **음악과 효과음**: `tools/compose_music.py`에 악보를 코드로 적어 직접 작곡했습니다.
