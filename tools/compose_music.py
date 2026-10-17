@@ -6,6 +6,7 @@
 #   clear.wav : 스테이지 클리어 효과음 (1.2초)
 #   over.wav  : 게임 오버 효과음 (1.6초)
 #   brick.wav : 벽돌 깨는 효과음 (0.25초)
+#   stomp.wav : 악마가 패들을 밟는 효과음 (0.2초)
 #
 # 사용: python compose_music.py <출력 폴더>
 import sys
@@ -245,6 +246,19 @@ def compose_brick():
     return (body + ting + click) * attack * tail
 
 
+def compose_stomp():
+    """악마가 패들을 밟는 소리: 낮고 짧은 '쿵' (0.2초)"""
+    length = 0.2
+    n = int(length * RATE)
+    t = np.arange(n) / RATE
+    rng = np.random.default_rng(5)
+    f = 70 * np.exp(-t * 30) + 45                       # 115Hz → 45Hz 로 떨어지는 낮은 음
+    thud = np.sin(2 * np.pi * np.cumsum(f) / RATE) * np.exp(-t * 22) * 0.8
+    scuff = rng.uniform(-1, 1, n) * np.exp(-t * 90) * 0.18   # 발바닥이 닿는 짧은 잡음
+    env = np.clip(t / 0.002, 0, 1) * np.clip((length - t) / 0.03, 0, 1)
+    return (thud + scuff) * env
+
+
 def smooth(x):
     """사각파의 거친 고음을 살짝 깎는 간단한 저역 통과"""
     k = np.array([0.25, 0.5, 0.25])
@@ -270,4 +284,5 @@ if __name__ == "__main__":
     save(f"{out}/clear.wav", compose_clear(), peak=0.9)
     save(f"{out}/over.wav", compose_over(), peak=0.9)
     save(f"{out}/brick.wav", compose_brick(), peak=0.7)   # 자주 나오므로 조금 작게
-    print(f"bgm {len(bgm) / RATE:.1f}s, start 1.0s, clear 1.2s, over 1.6s, brick 0.25s")
+    save(f"{out}/stomp.wav", compose_stomp(), peak=0.6)   # 2초마다 나오므로 작게
+    print(f"bgm {len(bgm) / RATE:.1f}s, start 1.0s, clear 1.2s, over 1.6s, brick 0.25s, stomp 0.2s")

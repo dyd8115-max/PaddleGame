@@ -72,6 +72,49 @@ struct Player {
     Rect bounds() const { return Rect(x, y, w, h); }
 };
 
+// 악마 스프라이트 정보 (devil.bmp 의 배치와 같아야 함)
+namespace DevilSprite {
+    constexpr float Cell       = 128.f;   // 한 칸 크기. 화면에 1배로 그림
+    constexpr int   WalkFrames = 8;
+    constexpr float WalkFps    = 10.f;
+    constexpr int   JumpKinds  = 3;       // 점프 모션 3종 (뛸 때마다 하나를 무작위로)
+    inline int jumpFrames(int kind) { return kind == 0 ? 6 : 5; }
+}
+
+// 2스테이지부터 주인공의 패들 위에 올라타 짓밟고 서 있는 방해꾼.
+// 패들을 따라다니며 그 위에서 조금씩 왔다 갔다 하고, 2초마다 점프했다가 패들 위로 쿵 떨어진다.
+// 공과 부딪히지 않고, 공보다 앞에 그려져서 패들 쪽으로 내려오는 공을 가린다
+struct Devil {
+    bool  active     = false;
+    bool  dropping   = true;    // 등장할 때 위에서 떨어지는 중
+    float offset     = 0.f;     // 패들 중심 기준 몸통 중심의 가로 위치
+    float walkVel    = 0.f;     // 패들 위에서 걷는 빠르기
+    float lift       = 0.f;     // 패들 윗면에서 발까지 높이 (0 이면 밟고 서 있음)
+    float liftVel    = 0.f;     // 위쪽이 +
+    bool  facingLeft = false;
+    bool  airborne   = false;
+    int   jumpKind   = 0;       // 이번 점프에 쓰는 모션 (0~2)
+    float jumpSpeed  = 0.f;     // 이번 점프의 처음 위쪽 속도 (점프 장면 고르기용)
+    float jumpTimer  = 0.f;     // 다음 점프까지 남은 시간
+    float animTime   = 0.f;
+    float stompTimer = 0.f;     // 착지 직후 패들이 눌리는 연출 남은 시간
+    float x = 0.f, y = 0.f;     // 그리기용 스프라이트 칸 좌상단 (매 프레임 계산)
+
+    Rect bounds() const { return Rect(x, y, DevilSprite::Cell, DevilSprite::Cell); }
+
+    int anim() const { return airborne ? 1 + jumpKind : 0; }   // 0 걷기, 1~3 점프
+    int frame() const {
+        if (!airborne) {
+            return static_cast<int>(animTime * DevilSprite::WalkFps) % DevilSprite::WalkFrames;
+        }
+        // 올라감 → 꼭대기 → 내려옴: 위아래 속도에 맞춰 장을 고름
+        const int n = DevilSprite::jumpFrames(jumpKind);
+        float p = (jumpSpeed - liftVel) / (2.f * jumpSpeed);
+        p = p < 0.f ? 0.f : (p > 0.999f ? 0.999f : p);
+        return static_cast<int>(p * n);
+    }
+};
+
 struct Brick {
     Rect rect;
     int  row   = 0;      // 그리기 색 결정용

@@ -7,7 +7,7 @@ enum class GameState { Menu, Playing };
 enum class GameResult { None, GameOver };
 
 // 소리 등 플랫폼 쪽 반응이 필요한 사건. 플랫폼 계층이 takeEvents()로 가져가 처리한다
-enum class GameEvent { Start, StageClear, GameOver, BrickBreak };
+enum class GameEvent { Start, StageClear, GameOver, BrickBreak, DevilStomp };
 
 // 게임 로직 전체. Win32/GDI에 의존하지 않는다.
 // 플랫폼 계층은 입력 전달(startGame, setPaddleTarget), update(dt) 호출, 상태 읽어서 그리기만 담당.
@@ -40,6 +40,8 @@ public:
     float      menuTime()   const { return menuTime_; }
     const Paddle&             paddle() const { return paddle_; }
     const Player&             player() const { return player_; }
+    const Devil&              devil()  const { return devil_; }
+    float                     stompDip() const;   // 악마가 착지해 패들이 눌린 깊이 (그리기용, 픽셀)
     const std::vector<Ball>&  balls()  const { return balls_; }
     const std::vector<Brick>& bricks() const { return bricks_; }
 
@@ -58,6 +60,8 @@ private:
     void collideWalls(Ball& b);
     void collidePaddle(Ball& b);
     void collideBricks(Ball& b);
+    void spawnDevil();
+    void updateDevil(float dt);
     void endGame(GameResult result);
 
     GameState  state_      = GameState::Menu;
@@ -73,6 +77,7 @@ private:
 
     Paddle             paddle_;
     Player             player_;
+    Devil              devil_;
     std::vector<Ball>  balls_;
     std::vector<Ball>  pendingBalls_;   // 순회 중 추가되는 공 (아이템)
     std::vector<Brick> bricks_;

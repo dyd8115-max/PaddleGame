@@ -29,10 +29,12 @@ add_custom_command(TARGET PaddleBreakout POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/resources/characters.bmp
         ${CMAKE_SOURCE_DIR}/resources/backgrounds.bmp
+        ${CMAKE_SOURCE_DIR}/resources/devil.bmp
         ${CMAKE_SOURCE_DIR}/resources/bgm.wav
         ${CMAKE_SOURCE_DIR}/resources/start.wav
         ${CMAKE_SOURCE_DIR}/resources/clear.wav
         ${CMAKE_SOURCE_DIR}/resources/over.wav
         ${CMAKE_SOURCE_DIR}/resources/brick.wav
+        ${CMAKE_SOURCE_DIR}/resources/stomp.wav
         $<TARGET_FILE_DIR:PaddleBreakout>
 )

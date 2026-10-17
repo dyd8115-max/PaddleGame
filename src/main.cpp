@@ -35,6 +35,9 @@ namespace {
     // characters.bmp: 행 = 캐릭터 * 2 + (왼쪽 보기 ? 1 : 0), 열 = 프레임, 마젠타가 투명색
     HBITMAP        g_sheet   = nullptr;
 
+    // 악마 시트 (devil.bmp): 128x128 칸, 행 = 동작 * 2 + (왼쪽 보기 ? 1 : 0)
+    HBITMAP        g_devilSheet = nullptr;
+
     // 배경 시트 (backgrounds.bmp): 960x1280 배경이 세로로 쌓여 있음
     HBITMAP        g_bgSheet = nullptr;
     const int      kBgW = 960, kBgH = 1280;
@@ -120,6 +123,13 @@ namespace {
                                                LR_LOADFROMFILE | LR_CREATEDIBSECTION));
     }
 
+    HBITMAP LoadBmp(const wchar_t* name) {
+        std::wstring p = FindAsset(name);
+        if (p.empty()) return nullptr;
+        return static_cast<HBITMAP>(LoadImageW(nullptr, p.c_str(), IMAGE_BITMAP, 0, 0,
+                                               LR_LOADFROMFILE | LR_CREATEDIBSECTION));
+    }
+
     HBITMAP LoadBackgrounds() {
         std::wstring p = FindAsset(L"backgrounds.bmp");
         if (p.empty()) return nullptr;
@@ -159,6 +169,7 @@ namespace {
             g_sheet = nullptr;
         }
         if (g_bgSheet) { DeleteObject(g_bgSheet); g_bgSheet = nullptr; }
+        if (g_devilSheet) { DeleteObject(g_devilSheet); g_devilSheet = nullptr; }
         if (g_bgCache) { DeleteObject(g_bgCache); g_bgCache = nullptr; }
     }
 
@@ -228,6 +239,29 @@ namespace {
         DeleteDC(cache);
     }
 
+    // 악마: 시트에서 동작·방향·장을 골라 그림
+    void DrawDevil(HDC hdc, const View& v) {
+        const Devil& d = g_game.devil();
+        if (!d.active) return;
+        if (!g_devilSheet) {   // 그림이 없으면 몸통 자리를 어두운 빨강으로
+            const Rect b = d.bounds();
+            FillLogicalRect(hdc, v, Rect(b.x + 36.f, b.y + 40.f, 46.f, 88.f), RGB(120, 30, 40));
+            return;
+        }
+        const int cell = static_cast<int>(DevilSprite::Cell);
+        HDC src = CreateCompatibleDC(hdc);
+        HGDIOBJ old = SelectObject(src, g_devilSheet);
+        const Rect b = d.bounds();
+        const float dip = d.airborne ? 0.f : g_game.stompDip();   // 밟고 있으면 패들과 같이 눌림
+        int x0 = v.toScreenX(b.left()), y0 = v.toScreenY(b.top() + dip);
+        int x1 = v.toScreenX(b.right()), y1 = v.toScreenY(b.bottom() + dip);
+        TransparentBlt(hdc, x0, y0, x1 - x0, y1 - y0, src,
+                       d.frame() * cell, (d.anim() * 2 + (d.facingLeft ? 1 : 0)) * cell,
+                       cell, cell, kKeyColor);
+        SelectObject(src, old);
+        DeleteDC(src);
+    }
+
     // 밝은 배경 위에서도 보이도록 어두운 테두리를 두른 사각형
     void FillOutlinedRect(HDC hdc, const View& v, const Rect& r, COLORREF color) {
         FillLogicalRect(hdc, v, Rect(r.x - 1.5f, r.y - 1.5f, r.w + 3.f, r.h + 3.f), RGB(15, 15, 25));
@@ -284,10 +318,14 @@ namespace {
                     GetBValue(c) + static_cast<int>((255 - GetBValue(c)) * flash));
             FillLogicalRect(hdc, v, dst, c);
         }
-        FillOutlinedRect(hdc, v, g_game.paddle().bounds(), kPaddleColor);
+        // 패들: 악마가 착지하면 살짝 눌렸다 올라옴 (그리기만, 판정 위치는 그대로)
+        Rect pad = g_game.paddle().bounds();
+        pad.y += g_game.stompDip();
+        FillOutlinedRect(hdc, v, pad, kPaddleColor);
         for (const Ball& b : g_game.balls()) {
             FillOutlinedRect(hdc, v, b.bounds(), kBallColor);
         }
+        DrawDevil(hdc, v);   // 공과 패들보다 나중에 그려서 공을 가리고, 발이 패들을 밟게 보임
 
         // 위쪽 정보: 왼쪽 점수, 오른쪽 스테이지와 음소거 표시
         HFONT font = MakeFont(v, 16.f, true);
@@ -306,8 +344,10 @@ namespace {
         // 다음 스테이지 시작 전 안내
         if (g_game.serving()) {
             DrawTextLine(hdc, v, L"STAGE " + std::to_wstring(g_game.stage()), 330.f, 34.f, true, kItemColor);
-            DrawTextLine(hdc, v, g_game.stage() == 1 ? L"준비!" : L"클리어! 공이 더 빨라집니다",
-                         385.f, 15.f, false, RGB(220, 220, 230));
+            const wchar_t* sub = g_game.stage() == 1 ? L"준비!"
+                               : g_game.stage() == 2 ? L"악마가 패들 위에 올라탔다! 공을 가리니 잘 보세요"
+                                                     : L"클리어! 공이 더 빨라집니다";
+            DrawTextLine(hdc, v, sub, 385.f, 15.f, false, RGB(220, 220, 230));
         }
     }
 
@@ -474,6 +514,7 @@ namespace {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
     g_sheet   = LoadSpriteSheet();
     g_bgSheet = LoadBackgrounds();
+    g_devilSheet = LoadBmp(L"devil.bmp");
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc   = WndProc;
@@ -499,7 +540,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
     ImmAssociateContext(hwnd, nullptr);
 
     const std::wstring effects[] = { FindAsset(L"start.wav"), FindAsset(L"clear.wav"),
-                                     FindAsset(L"over.wav"),  FindAsset(L"brick.wav") };
+                                     FindAsset(L"over.wav"),  FindAsset(L"brick.wav"),
+                                     FindAsset(L"stomp.wav") };
     Audio::Init(FindAsset(L"bgm.wav"), effects);
 
     QueryPerformanceFrequency(&g_freq);
@@ -526,6 +568,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
             case GameEvent::StageClear: Audio::Play(Audio::Sound::StageClear); break;
             case GameEvent::GameOver:   Audio::Play(Audio::Sound::GameOver);   break;
             case GameEvent::BrickBreak: Audio::Play(Audio::Sound::Brick);      break;
+            case GameEvent::DevilStomp: Audio::Play(Audio::Sound::Stomp);      break;
             }
         }
         InvalidateRect(hwnd, nullptr, FALSE);
