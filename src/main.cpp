@@ -5,10 +5,10 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include "Audio.h"
 #include "Game.h"
 
 #pragma comment(lib, "msimg32.lib")   // TransparentBlt
-#pragma comment(lib, "winmm.lib")     // PlaySound, mciSendString
 
 namespace {
     Game          g_game;
@@ -109,49 +109,6 @@ namespace {
         if (p.empty()) return nullptr;
         return static_cast<HBITMAP>(LoadImageW(nullptr, p.c_str(), IMAGE_BITMAP, 0, 0,
                                                LR_LOADFROMFILE | LR_CREATEDIBSECTION));
-    }
-
-    // ---------- 소리 ----------
-    // 배경음악은 PlaySound(반복), 시작 효과음은 MCI 로 따로 재생해서 둘이 겹쳐 들리게 한다
-    std::wstring g_bgmPath;
-    bool         g_startSoundOpen = false;
-    bool         g_muted = false;
-
-    void PlayBgm() {
-        if (g_muted || g_bgmPath.empty()) return;
-        PlaySoundW(g_bgmPath.c_str(), nullptr, SND_FILENAME | SND_ASYNC | SND_LOOP | SND_NODEFAULT);
-    }
-
-    void InitSound() {
-        g_bgmPath = FindAsset(L"bgm.wav");
-        PlayBgm();
-
-        std::wstring start = FindAsset(L"start.wav");
-        if (!start.empty()) {
-            std::wstring cmd = L"open \"" + start + L"\" type waveaudio alias startfx";
-            g_startSoundOpen = (mciSendStringW(cmd.c_str(), nullptr, 0, nullptr) == 0);
-        }
-    }
-
-    void PlayStartSound() {
-        if (g_muted || !g_startSoundOpen) return;
-        mciSendStringW(L"play startfx from 0", nullptr, 0, nullptr);
-    }
-
-    void ToggleMute() {
-        g_muted = !g_muted;
-        if (g_muted) {
-            PlaySoundW(nullptr, nullptr, 0);
-            if (g_startSoundOpen) mciSendStringW(L"stop startfx", nullptr, 0, nullptr);
-        } else {
-            PlayBgm();
-        }
-    }
-
-    void ReleaseSound() {
-        PlaySoundW(nullptr, nullptr, 0);
-        if (g_startSoundOpen) mciSendStringW(L"close startfx", nullptr, 0, nullptr);
-        g_startSoundOpen = false;
     }
 
     // 백버퍼: 창 크기가 바뀔 때만 다시 만든다
@@ -320,7 +277,7 @@ namespace {
         DrawTextLine(hdc, v, L"방향키 / 1 2 3 / 클릭  캐릭터 선택", 490.f, 14.f, false, gray);
         DrawTextLine(hdc, v, L"마우스  패들 이동", 516.f, 14.f, false, gray);
         DrawTextLine(hdc, v, L"F11 / Alt+Enter  전체화면     ESC  종료", 542.f, 14.f, false, gray);
-        DrawTextLine(hdc, v, g_muted ? L"M  소리 켜기" : L"M  소리 끄기", 568.f, 14.f, false, gray);
+        DrawTextLine(hdc, v, Audio::IsMuted() ? L"M  소리 켜기" : L"M  소리 끄기", 568.f, 14.f, false, gray);
     }
 
     // 백버퍼에 그린 뒤 한 번에 복사 (더블 버퍼링으로 깜빡임 방지)
@@ -361,10 +318,10 @@ namespace {
             case VK_SPACE:
                 if (g_game.state() == GameState::Menu) {
                     g_game.startGame();
-                    PlayStartSound();   // 입장 효과음 (배경음악 위에 겹쳐서)
+                    Audio::PlayStart();   // 입장 효과음 (배경음악 위에 겹쳐서)
                 }
                 break;
-            case 'M':       ToggleMute();             break;
+            case 'M':       Audio::SetMuted(!Audio::IsMuted()); break;
             case VK_LEFT:   g_game.moveSelection(-1); break;
             case VK_RIGHT:  g_game.moveSelection(+1); break;
             case '1': case '2': case '3':
@@ -415,7 +372,7 @@ namespace {
         }
 
         case WM_DESTROY:
-            ReleaseSound();
+            Audio::Shutdown();
             ReleaseResources();
             PostQuitMessage(0);
             return 0;
@@ -446,7 +403,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
-    InitSound();
+    // 소리는 별도 스레드에서 준비·재생 (메인 스레드를 막지 않음)
+    Audio::Init(FindAsset(L"bgm.wav"), FindAsset(L"start.wav"));
 
     QueryPerformanceFrequency(&g_freq);
     QueryPerformanceCounter(&g_prev);

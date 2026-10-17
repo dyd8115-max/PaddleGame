@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(PaddleBreakout WIN32
     src/main.cpp
     src/Game.cpp
+    src/Audio.cpp
+    src/Audio.h
     src/Game.h
     src/GameObjects.h
     src/Geometry.h
