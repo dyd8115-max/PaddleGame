@@ -123,5 +123,8 @@ python tools/compose_music.py resources
 ## 그림과 소리 제작
 
 - **캐릭터**: 로컬 PC에서 ComfyUI 워크플로를 직접 구성해 만들었습니다. 캐릭터 한 장을 마젠타 배경으로 그린 뒤, WAN 영상 생성 모델로 걷기 동작 영상을 만들고, 직접 만든 노드로 영상을 도트 프레임 16장의 스프라이트 시트로 변환했습니다.
+
+  <img src="docs/comfyui_workflow.png" width="720" alt="캐릭터 제작에 사용한 ComfyUI 워크플로">
+
 - **배경**: 이미지 생성 AI로 도트 판타지 배경을 만든 뒤, `tools/build_backgrounds.py`로 게임 비율과 밝기에 맞게 가공했습니다.
 - **음악과 효과음**: `tools/compose_music.py`에 악보를 코드로 적어 직접 작곡했습니다.
