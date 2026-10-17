@@ -1,0 +1,20 @@
+# 빌드 결과
+build/
+out/
+Debug/
+Release/
+x64/
+*.exe
+*.pdb
+*.ilk
+*.obj
+
+# 편집기 설정
+.vs/
+.vscode/
+*.user
+CMakeSettings.json
+CMakeUserPresets.json
+
+# 파이썬
+__pycache__/
