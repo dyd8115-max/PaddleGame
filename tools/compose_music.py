@@ -3,6 +3,9 @@
 # 결과
 #   bgm.wav   : 반복 재생용 배경음악 (BPM 150, 16마디, 다장조)
 #   start.wav : 게임 시작 효과음 "띠링" (1초)
+#   clear.wav : 스테이지 클리어 효과음 (1.2초)
+#   over.wav  : 게임 오버 효과음 (1.6초)
+#   brick.wav : 벽돌 깨는 효과음 (0.25초)
 #
 # 사용: python compose_music.py <출력 폴더>
 import sys
@@ -174,6 +177,74 @@ def compose_start():
     return buf
 
 
+def compose_clear():
+    """스테이지 클리어: 짧게 튀어 오르는 팡파르 (1.2초)"""
+    length = 1.2
+    buf = np.zeros(int(length * RATE))
+    # (음, 시작 시각, 길이)
+    notes = [("G5", 0.00, 0.08), ("C6", 0.09, 0.08), ("E6", 0.18, 0.08),
+             ("G6", 0.27, 0.12), ("E6", 0.42, 0.08)]
+    for n, t0, d in notes:
+        add(buf, t0, tone(freq(n), d, "square", duty=0.25, gate=0.9, vol=0.32,
+                          decay=0.05, sustain=0.5, release=0.01))
+    # 마지막 긴 음: 위 G6 + 아래 E6 화음, 살짝 떨림
+    t0 = 0.52
+    n = int((length - t0) * RATE)
+    t = np.arange(n) / RATE
+    vib = 1 + 0.006 * np.sin(2 * np.pi * 7 * t)
+    chord = (square(freq("G6") * vib, t, 0.25) * 0.28 + triangle(freq("E6") * vib, t) * 0.3
+             + triangle(freq("C5"), t) * 0.25)
+    chord *= np.exp(-t * 3.0) * np.clip((length - t0 - t) / 0.05, 0, 1) * np.clip(t / 0.005, 0, 1)
+    add(buf, t0, chord)
+    return buf
+
+
+def compose_over():
+    """게임 오버: 반음씩 내려가다 길게 처지는 소리 (1.6초)"""
+    length = 1.6
+    buf = np.zeros(int(length * RATE))
+    for i, n in enumerate(["B4", "A#4", "A4"]):
+        add(buf, i * 0.22, tone(freq(n), 0.22, "square", duty=0.5, gate=0.85, vol=0.3,
+                                decay=0.12, sustain=0.5, release=0.02))
+    # 마지막 음: 천천히 음이 떨어지며 떨리다 사라짐
+    t0 = 0.66
+    n = int((length - t0) * RATE)
+    t = np.arange(n) / RATE
+    f = freq("G#4") * (1 - 0.07 * np.clip(t / 0.9, 0, 1)) * (1 + 0.012 * np.sin(2 * np.pi * 5.5 * t))
+    phase = np.cumsum(f) / RATE
+    tail = np.where(phase % 1.0 < 0.5, 1.0, -1.0) * 0.3          # 사각파
+    tail += (4.0 * np.abs((phase / 2) % 1.0 - 0.5) - 1.0) * 0.3  # 한 옥타브 아래 삼각파
+    tail *= np.exp(-t * 1.6) * np.clip((length - t0 - t) / 0.08, 0, 1) * np.clip(t / 0.005, 0, 1)
+    add(buf, t0, tail)
+    return buf
+
+
+def compose_brick():
+    """벽돌 깨는 소리: 작고 묵직한 '띵' (0.25초)
+    낮게 '퉁' 하는 몸통 + 종처럼 맑은 '띵' + 아주 짧은 '딱' 소리를 겹침"""
+    length = 0.25
+    n = int(length * RATE)
+    t = np.arange(n) / RATE
+    rng = np.random.default_rng(3)
+
+    # 몸통: 음높이가 220Hz → 90Hz 로 빠르게 떨어지는 사인파 (묵직함)
+    f_body = 130 * np.exp(-t * 45) + 90
+    body = np.sin(2 * np.pi * np.cumsum(f_body) / RATE) * np.exp(-t * 28) * 0.75
+
+    # 띵: 도(C5) 사인파 + 종소리 같은 배음(2.76배) + 한 옥타브 위 삼각파, 빠르게 사라짐
+    f0 = freq("C5")
+    ting = (np.sin(2 * np.pi * f0 * t) * 0.45 * np.exp(-t * 20)
+            + np.sin(2 * np.pi * f0 * 2.76 * t) * 0.18 * np.exp(-t * 34)
+            + triangle(f0 * 2, t) * 0.10 * np.exp(-t * 40))
+
+    # 딱: 처음 몇 ms 의 잡음 (깨지는 순간의 타격감)
+    click = rng.uniform(-1, 1, n) * np.exp(-t * 450) * 0.35
+
+    attack = np.clip(t / 0.002, 0, 1)
+    tail = np.clip((length - t) / 0.03, 0, 1)
+    return (body + ting + click) * attack * tail
+
+
 def smooth(x):
     """사각파의 거친 고음을 살짝 깎는 간단한 저역 통과"""
     k = np.array([0.25, 0.5, 0.25])
@@ -196,4 +267,7 @@ if __name__ == "__main__":
     bgm = compose_bgm()
     save(f"{out}/bgm.wav", bgm, peak=0.6)       # 배경음악은 작게
     save(f"{out}/start.wav", compose_start(), peak=0.9)
-    print(f"bgm {len(bgm) / RATE:.1f}s, start 1.0s")
+    save(f"{out}/clear.wav", compose_clear(), peak=0.9)
+    save(f"{out}/over.wav", compose_over(), peak=0.9)
+    save(f"{out}/brick.wav", compose_brick(), peak=0.7)   # 자주 나오므로 조금 작게
+    print(f"bgm {len(bgm) / RATE:.1f}s, start 1.0s, clear 1.2s, over 1.6s, brick 0.25s")

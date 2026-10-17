@@ -10,21 +10,27 @@
 #pragma comment(lib, "winmm.lib")   // waveOut
 
 // 구조
-//   소리 스레드가 WAV 두 개를 읽어 두고, 작은 버퍼 여러 개를 번갈아 채워 waveOut 으로 보낸다.
-//   버퍼를 채울 때 배경음악(반복)과 효과음을 직접 더해서 섞는다.
+//   소리 스레드가 WAV 파일들을 읽어 두고, 작은 버퍼 여러 개를 번갈아 채워 waveOut 으로 보낸다.
+//   버퍼를 채울 때 배경음악(반복)과 효과음들을 직접 더해서 섞는다.
+//   효과음은 "목소리" 칸 여러 개에 나눠 재생해서, 같은 소리가 연달아 와도 서로 끊지 않고 겹친다.
 //   메인 스레드는 원자 변수로 "효과음 재생", "음소거", "종료" 요청만 남긴다.
 namespace {
     constexpr int kRate       = 44100;
-    constexpr int kBufSamples = 2048;   // 버퍼 하나 약 46ms
-    constexpr int kBufCount   = 4;
+    constexpr int kBufSamples = 512;    // 버퍼 하나 약 12ms (효과음이 늦지 않게 짧게)
+    constexpr int kBufCount   = 5;
+    constexpr int kMaxVoices  = 8;      // 동시에 겹쳐 낼 수 있는 효과음 수
 
-    std::wstring          g_bgmPath, g_startPath;
-    std::vector<int16_t>  g_bgm, g_start;
+    constexpr int kEffectCount = static_cast<int>(Audio::Sound::Count);
+
+    std::wstring          g_bgmPath;
+    std::wstring          g_effectPaths[kEffectCount];
+    std::vector<int16_t>  g_bgm;
+    std::vector<int16_t>  g_effects[kEffectCount];
     HANDLE                g_thread = nullptr;
     HANDLE                g_wake   = nullptr;
     std::atomic<bool>     g_quit{ false };
     std::atomic<bool>     g_muted{ false };
-    std::atomic<bool>     g_startRequest{ false };
+    std::atomic<unsigned> g_pending[kEffectCount];   // 효과음별 재생 요청 횟수
 
     // 16비트 모노 PCM WAV 만 읽는다 (tools/compose_music.py 출력 형식)
     bool LoadWav(const std::wstring& path, std::vector<int16_t>& out) {
@@ -75,9 +81,9 @@ namespace {
     }
 
     DWORD WINAPI AudioThread(LPVOID) {
-        LoadWav(g_bgmPath, g_bgm);
-        LoadWav(g_startPath, g_start);
-        if (g_bgm.empty() && g_start.empty()) return 0;
+        bool any = LoadWav(g_bgmPath, g_bgm);
+        for (int i = 0; i < kEffectCount; ++i) any |= LoadWav(g_effectPaths[i], g_effects[i]);
+        if (!any) return 0;
 
         WAVEFORMATEX fmt = {};
         fmt.wFormatTag      = WAVE_FORMAT_PCM;
@@ -95,11 +101,29 @@ namespace {
 
         std::vector<int16_t> samples(kBufSamples * kBufCount);
         WAVEHDR headers[kBufCount] = {};
-        size_t bgmPos   = 0;
-        size_t startPos = g_start.size();   // 끝 위치 = 재생 안 함
+        size_t bgmPos = 0;
+
+        struct Voice { int sound = -1; size_t pos = 0; };   // sound < 0 이면 빈 칸
+        Voice voices[kMaxVoices];
+
+        auto startVoice = [&](int sound) {
+            // 빈 칸을 쓰고, 없으면 가장 오래 재생된 소리를 밀어냄
+            int slot = 0;
+            for (int v = 0; v < kMaxVoices; ++v) {
+                if (voices[v].sound < 0) { slot = v; break; }
+                if (voices[v].pos > voices[slot].pos) slot = v;
+            }
+            voices[slot].sound = sound;
+            voices[slot].pos   = 0;
+        };
 
         auto fill = [&](int16_t* dst) {
-            if (g_startRequest.exchange(false)) startPos = 0;
+            for (int e = 0; e < kEffectCount; ++e) {
+                unsigned n = std::min(g_pending[e].exchange(0), 2u);   // 한 번에 너무 많이 쌓이지 않게
+                while (n--) {
+                    if (!g_effects[e].empty()) startVoice(e);
+                }
+            }
             const bool muted = g_muted.load();
             for (int i = 0; i < kBufSamples; ++i) {
                 int s = 0;
@@ -107,8 +131,11 @@ namespace {
                     s += g_bgm[bgmPos];
                     bgmPos = (bgmPos + 1) % g_bgm.size();   // 끝나면 처음으로 (무한 반복)
                 }
-                if (startPos < g_start.size()) {
-                    s += g_start[startPos++] * 4 / 5;
+                for (Voice& v : voices) {
+                    if (v.sound < 0) continue;
+                    const std::vector<int16_t>& clip = g_effects[v.sound];
+                    s += clip[v.pos++] * 4 / 5;
+                    if (v.pos >= clip.size()) v.sound = -1;
                 }
                 dst[i] = muted ? 0 : static_cast<int16_t>(std::max(-32768, std::min(32767, s)));
             }
@@ -124,7 +151,7 @@ namespace {
         }
 
         while (!g_quit.load()) {
-            WaitForSingleObject(g_wake, 50);
+            WaitForSingleObject(g_wake, 20);
             for (int b = 0; b < kBufCount; ++b) {
                 WAVEHDR& h = headers[b];
                 if (h.dwFlags & WHDR_DONE) {   // 다 재생한 버퍼를 다시 채워서 보냄
@@ -142,16 +169,16 @@ namespace {
 }
 
 namespace Audio {
-    void Init(const std::wstring& bgmPath, const std::wstring& startPath) {
+    void Init(const std::wstring& bgmPath, const std::wstring (&effectPaths)[kEffectCount]) {
         if (g_thread) return;
-        g_bgmPath   = bgmPath;
-        g_startPath = startPath;
+        g_bgmPath = bgmPath;
+        for (int i = 0; i < kEffectCount; ++i) g_effectPaths[i] = effectPaths[i];
         g_wake      = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         g_thread    = CreateThread(nullptr, 0, AudioThread, nullptr, 0, nullptr);
     }
 
-    void PlayStart() {
-        if (!g_muted.load()) g_startRequest = true;
+    void Play(Sound sound) {
+        if (!g_muted.load()) g_pending[static_cast<int>(sound)].fetch_add(1);
     }
 
     void SetMuted(bool muted) { g_muted = muted; }

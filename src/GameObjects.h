@@ -33,6 +33,11 @@ namespace Characters {
     }
 }
 
+// 배경 그림 (backgrounds.bmp 에 세로로 쌓인 개수와 같아야 함)
+namespace Backgrounds {
+    constexpr int Count = 6;
+}
+
 struct Ball {
     Vec2  pos;          // 좌상단 좌표
     Vec2  vel;          // 속도 벡터 (방향 + 빠르기), 단위: 픽셀/초
@@ -72,4 +77,5 @@ struct Brick {
     int  row   = 0;      // 그리기 색 결정용
     bool alive = true;
     bool item  = false;  // 깨지면 공 하나 추가
+    float appearAt = 0.f;   // 스테이지 시작 후 이 시각(초)에 나타남 (무작위 순서 연출)
 };

@@ -1,6 +1,7 @@
 ﻿// Win32 + GDI 플랫폼 계층: 창, 입력 전달, 게임 루프, 그리기만 담당
 #include <windows.h>
 #include <windowsx.h>
+#include <imm.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,6 +10,7 @@
 #include "Game.h"
 
 #pragma comment(lib, "msimg32.lib")   // TransparentBlt
+#pragma comment(lib, "imm32.lib")     // 한글 입력기 끄기
 
 namespace {
     Game          g_game;
@@ -32,6 +34,13 @@ namespace {
     // ---------- 캐릭터 스프라이트 시트 ----------
     // characters.bmp: 행 = 캐릭터 * 2 + (왼쪽 보기 ? 1 : 0), 열 = 프레임, 마젠타가 투명색
     HBITMAP        g_sheet   = nullptr;
+
+    // 배경 시트 (backgrounds.bmp): 960x1280 배경이 세로로 쌓여 있음
+    HBITMAP        g_bgSheet = nullptr;
+    const int      kBgW = 960, kBgH = 1280;
+    // 화면 크기에 맞춰 한 번만 늘려 둔 배경 (크기나 배경이 바뀔 때만 다시 만듦)
+    HBITMAP        g_bgCache = nullptr;
+    int            g_bgCacheIndex = -1, g_bgCacheW = 0, g_bgCacheH = 0;
     const int      kCellW    = static_cast<int>(Characters::CellW);
     const int      kCellH    = static_cast<int>(Characters::CellH);
     const COLORREF kKeyColor = RGB(255, 0, 255);
@@ -111,6 +120,13 @@ namespace {
                                                LR_LOADFROMFILE | LR_CREATEDIBSECTION));
     }
 
+    HBITMAP LoadBackgrounds() {
+        std::wstring p = FindAsset(L"backgrounds.bmp");
+        if (p.empty()) return nullptr;
+        return static_cast<HBITMAP>(LoadImageW(nullptr, p.c_str(), IMAGE_BITMAP, 0, 0,
+                                               LR_LOADFROMFILE | LR_CREATEDIBSECTION));
+    }
+
     // 백버퍼: 창 크기가 바뀔 때만 다시 만든다
     HDC     g_backDC  = nullptr;
     HBITMAP g_backBmp = nullptr;
@@ -142,6 +158,8 @@ namespace {
             DeleteObject(g_sheet);
             g_sheet = nullptr;
         }
+        if (g_bgSheet) { DeleteObject(g_bgSheet); g_bgSheet = nullptr; }
+        if (g_bgCache) { DeleteObject(g_bgCache); g_bgCache = nullptr; }
     }
 
     // ---------- 그리기 도우미 ----------
@@ -176,6 +194,46 @@ namespace {
         DeleteObject(font);
     }
 
+    // 배경을 게임 영역 전체에 그림
+    void DrawBackground(HDC hdc, const View& v, int index) {
+        if (!g_bgSheet || index < 0 || index >= Backgrounds::Count) return;
+        const int x0 = v.toScreenX(0.f), y0 = v.toScreenY(0.f);
+        const int w  = v.toScreenX(World::Width) - x0;
+        const int h  = v.toScreenY(World::Height) - y0;
+        if (w <= 0 || h <= 0) return;
+
+        HDC cache = CreateCompatibleDC(hdc);
+        if (!g_bgCache || index != g_bgCacheIndex || w != g_bgCacheW || h != g_bgCacheH) {
+            // 큰 원본을 매 프레임 늘리면 느리므로, 화면 크기로 한 번 늘려서 보관
+            if (g_bgCache) DeleteObject(g_bgCache);
+            g_bgCache = CreateCompatibleBitmap(hdc, w, h);
+            HGDIOBJ oldC = SelectObject(cache, g_bgCache);
+
+            HDC src = CreateCompatibleDC(hdc);
+            HGDIOBJ oldS = SelectObject(src, g_bgSheet);
+            SetStretchBltMode(cache, HALFTONE);
+            SetBrushOrgEx(cache, 0, 0, nullptr);
+            StretchBlt(cache, 0, 0, w, h, src, 0, index * kBgH, kBgW, kBgH, SRCCOPY);
+            SelectObject(src, oldS);
+            DeleteDC(src);
+
+            SelectObject(cache, oldC);
+            g_bgCacheIndex = index;
+            g_bgCacheW = w;
+            g_bgCacheH = h;
+        }
+        HGDIOBJ old = SelectObject(cache, g_bgCache);
+        BitBlt(hdc, x0, y0, w, h, cache, 0, 0, SRCCOPY);
+        SelectObject(cache, old);
+        DeleteDC(cache);
+    }
+
+    // 밝은 배경 위에서도 보이도록 어두운 테두리를 두른 사각형
+    void FillOutlinedRect(HDC hdc, const View& v, const Rect& r, COLORREF color) {
+        FillLogicalRect(hdc, v, Rect(r.x - 1.5f, r.y - 1.5f, r.w + 3.f, r.h + 3.f), RGB(15, 15, 25));
+        FillLogicalRect(hdc, v, r, color);
+    }
+
     // 캐릭터 한 프레임을 논리 사각형 dst 에 그림
     void DrawCharacter(HDC hdc, const View& v, int character, int frame,
                        bool facingLeft, const Rect& dst) {
@@ -201,26 +259,56 @@ namespace {
 
     // ---------- 화면별 그리기 ----------
     void RenderPlaying(HDC hdc, const View& v) {
+        DrawBackground(hdc, v, g_game.background());
+
         const Player& p = g_game.player();
         DrawCharacter(hdc, v, p.character, p.frame(), p.facingLeft, p.bounds());
 
         for (const Brick& k : g_game.bricks()) {
             if (!k.alive) continue;
+            const float r = g_game.brickReveal(k);
+            if (r <= 0.f) continue;   // 아직 나타나지 않은 벽돌
+
+            // 톡 튀어나오는 크기 변화: 0 → 살짝 크게 → 원래 크기
+            const float c1 = 1.70158f, c3 = c1 + 1.f, u = r - 1.f;
+            const float scale = 1.f + c3 * u * u * u + c1 * u * u;
+            const Rect& b = k.rect;
+            const Rect dst(b.centerX() - b.w * scale * 0.5f, b.centerY() - b.h * scale * 0.5f,
+                           b.w * scale, b.h * scale);
+
+            // 막 나타날 때는 하얗게 반짝였다가 원래 색으로
             COLORREF c = k.item ? kItemColor : kRowColors[k.row % kRowColors.size()];
-            FillLogicalRect(hdc, v, k.rect, c);
+            const float flash = (1.f - r) * 0.7f;
+            c = RGB(GetRValue(c) + static_cast<int>((255 - GetRValue(c)) * flash),
+                    GetGValue(c) + static_cast<int>((255 - GetGValue(c)) * flash),
+                    GetBValue(c) + static_cast<int>((255 - GetBValue(c)) * flash));
+            FillLogicalRect(hdc, v, dst, c);
         }
-        FillLogicalRect(hdc, v, g_game.paddle().bounds(), kPaddleColor);
+        FillOutlinedRect(hdc, v, g_game.paddle().bounds(), kPaddleColor);
         for (const Ball& b : g_game.balls()) {
-            FillLogicalRect(hdc, v, b.bounds(), kBallColor);
+            FillOutlinedRect(hdc, v, b.bounds(), kBallColor);
         }
 
+        // 위쪽 정보: 왼쪽 점수, 오른쪽 스테이지와 음소거 표시
         HFONT font = MakeFont(v, 16.f, true);
         HGDIOBJ old = SelectObject(hdc, font);
         SetTextColor(hdc, RGB(255, 255, 255));
         std::wstring s = L"점수 " + std::to_wstring(g_game.score());
         TextOutW(hdc, v.toScreenX(10.f), v.toScreenY(10.f), s.c_str(), static_cast<int>(s.size()));
+
+        std::wstring right = L"스테이지 " + std::to_wstring(g_game.stage());
+        if (Audio::IsMuted()) right = L"소리 끔   " + right;
+        RECT rc = { v.toScreenX(0.f), v.toScreenY(10.f), v.toScreenX(World::Width - 10.f), v.toScreenY(34.f) };
+        DrawTextW(hdc, right.c_str(), static_cast<int>(right.size()), &rc, DT_RIGHT | DT_TOP | DT_SINGLELINE);
         SelectObject(hdc, old);
         DeleteObject(font);
+
+        // 다음 스테이지 시작 전 안내
+        if (g_game.serving()) {
+            DrawTextLine(hdc, v, L"STAGE " + std::to_wstring(g_game.stage()), 330.f, 34.f, true, kItemColor);
+            DrawTextLine(hdc, v, g_game.stage() == 1 ? L"준비!" : L"클리어! 공이 더 빨라집니다",
+                         385.f, 15.f, false, RGB(220, 220, 230));
+        }
     }
 
     void RenderMenu(HDC hdc, const View& v) {
@@ -263,10 +351,9 @@ namespace {
         float y = 370.f;
         switch (g_game.lastResult()) {
         case GameResult::GameOver:
-            DrawTextLine(hdc, v, L"게임 오버  -  점수 " + std::to_wstring(g_game.score()), y, 18.f, true, RGB(240, 110, 110));
-            break;
-        case GameResult::Clear:
-            DrawTextLine(hdc, v, L"클리어!  -  점수 " + std::to_wstring(g_game.score()), y, 18.f, true, kItemColor);
+            DrawTextLine(hdc, v, L"게임 오버  -  스테이지 " + std::to_wstring(g_game.stage()) +
+                                 L"  ·  점수 " + std::to_wstring(g_game.score()),
+                         y, 18.f, true, RGB(240, 110, 110));
             break;
         default:
             break;
@@ -313,19 +400,21 @@ namespace {
 
     LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         switch (msg) {
-        case WM_KEYDOWN:
-            switch (wParam) {
-            case VK_SPACE:
-                if (g_game.state() == GameState::Menu) {
-                    g_game.startGame();
-                    Audio::PlayStart();   // 입장 효과음 (배경음악 위에 겹쳐서)
-                }
-                break;
+        case WM_KEYDOWN: {
+            // 한글 입력 상태에서는 글자 키가 VK_PROCESSKEY 로 들어오므로 실제 키로 되돌림
+            UINT key = static_cast<UINT>(wParam);
+            if (key == VK_PROCESSKEY) key = ImmGetVirtualKey(hwnd);
+            if (key == VK_PROCESSKEY) key = MapVirtualKeyW((lParam >> 16) & 0xFF, MAPVK_VSC_TO_VK);
+
+            if (lParam & (1 << 30)) return 0;   // 키를 누르고 있을 때 반복 입력은 무시
+
+            switch (key) {
+            case VK_SPACE:  g_game.startGame();       break;   // 효과음은 이벤트로 처리
             case 'M':       Audio::SetMuted(!Audio::IsMuted()); break;
             case VK_LEFT:   g_game.moveSelection(-1); break;
             case VK_RIGHT:  g_game.moveSelection(+1); break;
             case '1': case '2': case '3':
-                g_game.selectCharacter(static_cast<int>(wParam - '1'));
+                g_game.selectCharacter(static_cast<int>(key - '1'));
                 break;
             case VK_F11:    ToggleFullscreen(hwnd);   break;
             case VK_ESCAPE:
@@ -334,6 +423,7 @@ namespace {
                 break;
             }
             return 0;
+        }
 
         case WM_SYSKEYDOWN:
             // Alt + Enter: 전체화면 전환
@@ -382,7 +472,8 @@ namespace {
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
-    g_sheet = LoadSpriteSheet();
+    g_sheet   = LoadSpriteSheet();
+    g_bgSheet = LoadBackgrounds();
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc   = WndProc;
@@ -404,7 +495,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
     // 소리는 별도 스레드에서 준비·재생 (메인 스레드를 막지 않음)
-    Audio::Init(FindAsset(L"bgm.wav"), FindAsset(L"start.wav"));
+    // 이 창에서는 한글 입력기를 꺼서 키 입력이 그대로 들어오게 함
+    ImmAssociateContext(hwnd, nullptr);
+
+    const std::wstring effects[] = { FindAsset(L"start.wav"), FindAsset(L"clear.wav"),
+                                     FindAsset(L"over.wav"),  FindAsset(L"brick.wav") };
+    Audio::Init(FindAsset(L"bgm.wav"), effects);
 
     QueryPerformanceFrequency(&g_freq);
     QueryPerformanceCounter(&g_prev);
@@ -424,6 +520,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
         g_prev = now;
 
         g_game.update(dt);
+        for (GameEvent e : g_game.takeEvents()) {   // 게임에서 일어난 사건에 맞춰 효과음
+            switch (e) {
+            case GameEvent::Start:      Audio::Play(Audio::Sound::Start);      break;
+            case GameEvent::StageClear: Audio::Play(Audio::Sound::StageClear); break;
+            case GameEvent::GameOver:   Audio::Play(Audio::Sound::GameOver);   break;
+            case GameEvent::BrickBreak: Audio::Play(Audio::Sound::Brick);      break;
+            }
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
         UpdateWindow(hwnd);
         Sleep(1);

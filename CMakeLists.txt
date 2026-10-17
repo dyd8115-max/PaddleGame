@@ -14,7 +14,7 @@ add_executable(PaddleBreakout WIN32
     src/Geometry.h
 )
 
-target_link_libraries(PaddleBreakout PRIVATE gdi32 msimg32 winmm)
+target_link_libraries(PaddleBreakout PRIVATE gdi32 msimg32 winmm imm32)
 
 if(MSVC)
     target_compile_options(PaddleBreakout PRIVATE /utf-8 /W4)
@@ -28,7 +28,11 @@ endif()
 add_custom_command(TARGET PaddleBreakout POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/resources/characters.bmp
+        ${CMAKE_SOURCE_DIR}/resources/backgrounds.bmp
         ${CMAKE_SOURCE_DIR}/resources/bgm.wav
         ${CMAKE_SOURCE_DIR}/resources/start.wav
+        ${CMAKE_SOURCE_DIR}/resources/clear.wav
+        ${CMAKE_SOURCE_DIR}/resources/over.wav
+        ${CMAKE_SOURCE_DIR}/resources/brick.wav
         $<TARGET_FILE_DIR:PaddleBreakout>
 )

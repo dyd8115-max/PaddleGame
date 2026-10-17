@@ -15,7 +15,7 @@ C++과 Win32 GDI로 만들었습니다.
 1. 시작 화면에서 캐릭터를 고릅니다.
 2. 스페이스바를 누르면 효과음과 함께 게임이 시작되고, 공이 아래에서 위로 날아갑니다.
 3. 마우스를 좌우로 움직여 패들로 공을 받아냅니다. 캐릭터는 패들 아래에서 따라 걷습니다.
-4. 공으로 벽돌을 모두 깨면 클리어입니다.
+4. 벽돌을 모두 깨면 다음 스테이지로 넘어갑니다. 스테이지는 끝없이 이어집니다.
 5. 공이 모두 아래로 빠지면 게임이 끝나고 시작 화면으로 돌아갑니다.
 
 ## 조작
@@ -36,7 +36,11 @@ C++과 Win32 GDI로 만들었습니다.
 - 벽돌 하나를 깰 때마다 10점을 얻습니다.
 - **노란 벽돌**을 깨면 그 자리에서 공이 하나 더 생깁니다.
 - 공이 여러 개일 때는 마지막 공까지 빠져야 게임이 끝납니다.
-- 시작 화면에 이번 판 점수와 최고 점수가 표시됩니다.
+- 게임을 시작할 때 판타지 배경 6종 중 하나가 무작위로 나오고, 스테이지가 바뀔 때마다 다른 배경으로 바뀝니다.
+- 스테이지를 클리어하면 벽돌 배치가 바뀌고 공이 조금씩 빨라집니다. (배치 5종이 차례로 반복, 공 빠르기는 최대 1.6배)
+- 스테이지가 시작되면 벽돌이 무작위 순서로 하나씩 톡톡 채워지고, 다 채워지면 공이 패들 위에서 출발합니다.
+- 시작 화면에 이번 판의 스테이지와 점수, 최고 점수가 표시됩니다.
+- 게임 시작, 벽돌 깨기, 스테이지 클리어, 게임 오버 때 각각 효과음이 나옵니다. 배경음악은 계속 반복됩니다.
 
 ## 캐릭터
 
@@ -54,7 +58,7 @@ Windows 전용입니다.
 
 ### 바로 실행
 
-1. [Releases](https://github.com/dyd8115-max/PaddleGame/releases) 에서 최신 `PaddleBreakout-v1.0.zip`을 받습니다.
+1. [Releases](https://github.com/dyd8115-max/PaddleGame/releases) 에서 최신 버전의 `PaddleBreakout` zip 파일을 받습니다.
 2. 압축을 **모두** 풉니다. (압축 파일 안에서 바로 실행하면 그림과 소리를 찾지 못합니다)
 3. `PaddleBreakout.exe`를 실행합니다.
 
@@ -73,7 +77,7 @@ cmake --build build --config Release
 ```
 
 빌드하면 `resources` 폴더의 그림과 소리 파일이 실행 파일 옆으로 함께 복사됩니다.
-실행 파일만 따로 옮길 때는 `characters.bmp`, `bgm.wav`, `start.wav`를 같은 폴더에 두어야 합니다.
+실행 파일만 따로 옮길 때는 `resources` 폴더의 파일 7개(`.bmp` 2개와 `.wav` 5개)를 같은 폴더에 두어야 합니다.
 파일이 없어도 게임은 실행되며, 캐릭터는 사각형으로 그려지고 소리는 나지 않습니다.
 
 ---
@@ -89,9 +93,13 @@ src/         게임 코드
   Audio.h/.cpp    배경음악과 효과음 재생 (별도 스레드)
 resources/   실행에 필요한 그림과 소리
   characters.bmp  세 캐릭터의 걷기 애니메이션 (16프레임, 좌우 방향)
+  backgrounds.bmp 배경 6종 (960x1280, 세로로 쌓음)
   bgm.wav         배경음악 (반복 재생)
   start.wav       게임 시작 효과음
-assets/      캐릭터 원본 그림
+  clear.wav       스테이지 클리어 효과음
+  over.wav        게임 오버 효과음
+  brick.wav       벽돌 깨는 효과음
+assets/      캐릭터와 배경 원본 그림
 tools/       그림과 음악을 만드는 스크립트
 docs/        README 화면 사진
 ```
@@ -102,8 +110,10 @@ docs/        README 화면 사진
 
 ```
 python tools/build_sprites.py assets resources/characters.bmp
+python tools/build_backgrounds.py assets/backgrounds resources/backgrounds.bmp
 python tools/compose_music.py resources
 ```
 
 - `build_sprites.py`: `assets`의 원본 시트 세 장을 GDI에서 바로 쓸 수 있는 BMP 한 장으로 합칩니다. 마젠타색이 투명색입니다.
-- `compose_music.py`: 스크립트 안에 적힌 악보로 배경음악과 효과음을 만듭니다. 음이나 빠르기를 고치면 새 음악이 만들어집니다.
+- `build_backgrounds.py`: `assets/backgrounds`의 그림을 3:4로 자르고, 공과 벽돌이 잘 보이도록 어둡게 한 뒤 한 장으로 합칩니다.
+- `compose_music.py`: 스크립트 안에 적힌 악보로 배경음악과 효과음 4종을 만듭니다. 음이나 빠르기를 고치면 새 음악이 만들어집니다.
