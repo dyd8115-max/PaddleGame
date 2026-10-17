@@ -52,12 +52,20 @@ C++과 Win32 GDI로 만들었습니다.
 
 Windows 전용입니다.
 
-### Visual Studio
+### 바로 실행
+
+1. [Releases](https://github.com/dyd8115-max/PaddleGame/releases) 에서 최신 `PaddleBreakout-v1.0.zip`을 받습니다.
+2. 압축을 **모두** 풉니다. (압축 파일 안에서 바로 실행하면 그림과 소리를 찾지 못합니다)
+3. `PaddleBreakout.exe`를 실행합니다.
+
+처음 실행할 때 "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누르세요.
+
+### 직접 빌드 — Visual Studio
 
 1. Visual Studio에서 **폴더 열기**로 이 저장소 폴더를 엽니다. (`CMakeLists.txt`를 자동으로 인식합니다)
 2. 시작 항목으로 `PaddleBreakout.exe`를 고르고 실행합니다.
 
-### 명령줄
+### 직접 빌드 — 명령줄
 
 ```
 cmake -S . -B build
@@ -77,7 +85,8 @@ src/         게임 코드
   Geometry.h      벡터와 사각형 충돌
   GameObjects.h   공, 패들, 벽돌, 캐릭터
   Game.h/.cpp     게임 규칙과 상태 (Win32에 의존하지 않음)
-  main.cpp        창, 입력, 그리기, 소리
+  main.cpp        창, 입력, 그리기
+  Audio.h/.cpp    배경음악과 효과음 재생 (별도 스레드)
 resources/   실행에 필요한 그림과 소리
   characters.bmp  세 캐릭터의 걷기 애니메이션 (16프레임, 좌우 방향)
   bgm.wav         배경음악 (반복 재생)
