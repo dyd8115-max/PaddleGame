@@ -1,3 +1,5 @@
+import { assetUrl } from './assetUrl';
+
 // 소리 재생 (Web Audio). 배경음악은 끊김 없이 반복하고, 효과음은 그 위에 겹쳐 낸다.
 // 휴대폰 브라우저는 사용자가 화면을 처음 누른 뒤에야 소리를 낼 수 있어서, unlock() 을 첫 터치에서 부른다.
 
@@ -28,7 +30,7 @@ export class Audio {
   constructor() {
     // 파일은 미리 받아 두고, 해석은 소리 장치를 연 뒤에 한다
     for (const [name, url] of Object.entries(FILES)) {
-      this.raw.set(name, fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
+      this.raw.set(name, fetch(assetUrl(url)).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
     }
   }
 

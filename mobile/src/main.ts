@@ -5,7 +5,7 @@ import { Game, type GameEvent } from './game/game';
 import { Characters } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
-  closeApp, getInsets, leaderboardAvailable, loadValue, onBack, onInsetsChange,
+  closeApp, getInsets, leaderboardAvailable, loadValue, onAppState, onBack, onInsetsChange,
   openLeaderboard, saveValue, submitScore, type Insets,
 } from './platform';
 import { render } from './render';
@@ -181,6 +181,11 @@ document.addEventListener('visibilitychange', () => {
   const hidden = document.visibilityState === 'hidden';
   audio.setHidden(hidden);
   if (hidden) pause();
+});
+
+onAppState((active) => {
+  audio.setHidden(!active);
+  if (!active) pause();
 });
 
 // 안드로이드 뒤로가기: 플레이 중 → 일시정지, 창이 떠 있으면 닫기, 메뉴 → 종료 확인

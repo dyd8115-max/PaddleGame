@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">블록 브레이커</string>
+    <string name="title_activity_main">블록 브레이커</string>
+    <string name="package_name">io.github.dyd8115.blockbreaker</string>
+    <string name="custom_url_scheme">io.github.dyd8115.blockbreaker</string>
+</resources>
