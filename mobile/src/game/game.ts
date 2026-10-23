@@ -1,20 +1,27 @@
 // 게임 로직 전체 (PC 버전 Game.cpp 와 같은 규칙). 화면, 입력, 소리에 의존하지 않는다.
 // 플랫폼 쪽은 입력 전달, update(dt) 호출, 상태를 읽어 그리기, takeEvents() 로 소리 처리만 한다.
 import { Rect, Vec2 } from './geometry';
-import { BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, Paddle, Player, World, type BallKind } from './objects';
+import {
+  BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
+  type BallKind, type ItemKind,
+} from './objects';
 
 export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
-export type GameEvent = 'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'devilStomp' | 'revive';
+export type GameEvent = 'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'devilStomp' | 'revive' | 'itemGood' | 'itemBad' | 'skill';
 
 const BALL_SPEED = 540;     // 1스테이지 공 빠르기 (픽셀/초)
 const SPEED_STEP = 1.3;     // 스테이지마다 1.3배씩 빨라짐
 const SPEED_MAX = 4;        // 하얀 공 기준 최대 4배
 const SPEED_ABS_MAX = 2400; // 빨간 공이라도 이보다 빠르면 화면에서 보이지 않음 (픽셀/초)
-// 벽돌에서 새로 생기는 공의 색 확률 (처음 출발하는 공과 부활 공은 항상 하양)
+// 아이템이나 능력으로 늘어나는 공의 색 확률 (처음 출발하는 공과 부활 공은 항상 하양)
 const KIND_CHANCE: [BallKind, number][] = [['white', 0.4], ['red', 0.3], ['green', 0.3]];
-const DROP_CHANCE = 0.05;   // 일반 벽돌을 깰 때 공이 하나 더 나올 기본 확률 (노란 벽돌은 항상)
-const MAX_BALLS = 12;       // 화면에 동시에 있을 수 있는 공 수
+const ITEM_CHANCE = 0.3;    // 일반 벽돌을 깰 때 아이템이 떨어질 확률 (노란 벽돌은 항상)
+const ITEM_FALL_SPEED = 170; // 아이템이 떨어지는 빠르기 (픽셀/초)
+const MAX_BALLS = 30;       // 화면에 동시에 있을 수 있는 공 수
+const PAD_MIN = 24;         // 패들 길이 한계 (짧게 아이템을 여러 번 받아도)
+const PAD_MAX = 240;        // (길게 아이템을 여러 번 받아도 화면 절반까지)
+const SERVE_SPREAD = 16;    // 시작 공이 여러 개일 때 패들 위에서 벌려 놓는 간격
 const SERVE_TIME = 1.4;     // 스테이지 시작 전 공이 기다리는 시간
 const FILL_TIME = 0.9;      // 벽돌이 모두 나타나기까지 걸리는 시간
 const POP_TIME = 0.16;      // 벽돌 하나가 톡 튀어나오는 시간
@@ -39,15 +46,14 @@ const NUDGE_MIN = 8 * Math.PI / 180;
 const NUDGE_MAX = 20 * Math.PI / 180;
 const MIN_ANGLE = 30 * Math.PI / 180;   // 공이 수평에 가까워지지 않게 (출발 각도와 같은 기준)
 
-// 스테이지별 배치: '#' 벽돌, '*' 공 나오는 벽돌, '=' 회색 벽(안 깨짐), '.' 빈칸
-// 칸막이 → 지그재그 → 요새 순서로 점점 복잡해지고, 4스테이지부터 같은 순서로 반복한다
+// 스테이지별 배치: '#' 벽돌, '*' 노란 벽돌(아이템이 꼭 떨어짐), '=' 회색 벽(안 깨짐), '.' 빈칸
+// 회색 벽은 벽돌 아래에 짧게 한 줄만 두어 공이 튀는 방향만 바꾼다. 5스테이지마다 반복
 const LAYOUTS: string[][] = [
-  // 칸막이: 세로 벽이 칸을 나눠서 칸마다 공을 넣어야 한다
-  ['##=##=##', '##=##=##', '#*=##=*#', '##=**=##', '##=##=##', '..=..=..'],
-  // 지그재그: 아래 벽은 오른쪽, 위 벽은 왼쪽이 열려 있고, 두 벽 사이 통로에도 벽돌이 있다
-  ['########', '#*####*#', '########', '........', '....====', '........', '.#.**.#.', '........', '====....'],
-  // 요새: 아래와 옆이 막혀 있어서, 옆 통로로 공을 올려 보내 위에서 떨어뜨려야 한다
-  ['#.####.#', '#=####=#', '.=#**#=.', '.=####=.', '#======#'],
+  ['########', '##*##*##', '########', '#.####.#', '###**###', '........', '...==...'],
+  ['...##...', '..#**#..', '.######.', '##*##*##', '########', '........', '==....=='],
+  ['#.#.#.#.', '.#.#*#.#', '#.#.#.#.', '.#*#.#.#', '#.#.#.#.', '.#.#.#*#', '........', '.==..==.'],
+  ['.##..##.', '########', '##*##*##', '.######.', '..####..', '...**...', '........', '=..==..='],
+  ['########', '........', '#*####*#', '........', '########', '#**##**#', '........', '..=..=..'],
 ];
 
 const BRICK_TOP = 60;
@@ -70,12 +76,13 @@ export class Game {
   private menuTime_ = 0;
   private revivesLeft_ = 0;   // 성녀: 남은 부활 횟수
   private reviving_ = false;  // 부활 직후 공이 기다리는 중 (안내 문구용)
+  private skillUsed_ = false; // 꼬마: 이번 스테이지에 능력을 썼는지
 
   readonly paddle = new Paddle();
   readonly player = new Player();
   devil = new Devil();
   balls: Ball[] = [];
-  private pendingBalls_: Ball[] = [];   // 순회 중 추가되는 공 (아이템)
+  items: Item[] = [];   // 떨어지는 아이템
   bricks: Brick[] = [];
   walls: Rect[] = [];   // 회색 벽 (깨지지 않음)
   private events_: GameEvent[] = [];
@@ -99,6 +106,12 @@ export class Game {
   get menuTime(): number { return this.menuTime_; }
   get revivesLeft(): number { return this.revivesLeft_; }
   get reviving(): boolean { return this.reviving_ && this.serveTimer_ > 0; }
+  get hasSkill(): boolean { return Characters.List[this.player.character].skill; }
+  get skillUsed(): boolean { return this.skillUsed_; }
+  // 꼬마 능력 버튼을 지금 누를 수 있는지 (공이 출발한 뒤, 스테이지마다 한 번)
+  get skillReady(): boolean {
+    return this.state_ === 'playing' && this.hasSkill && !this.skillUsed_ && this.serveTimer_ <= 0;
+  }
 
   brickReveal(k: Brick): number {
     const t = (this.introTime_ - k.appearAt) / POP_TIME;
@@ -163,6 +176,15 @@ export class Game {
     return false;
   }
 
+  // 꼬마 능력: 공 2배. 썼으면 true
+  useSkill(): boolean {
+    if (!this.skillReady) return false;
+    this.skillUsed_ = true;
+    this.multiplyBalls(2);
+    this.events_.push('skill');
+    return true;
+  }
+
   startGame(): void {
     if (this.state_ !== 'menu') return;
     this.score_ = 0;
@@ -171,7 +193,7 @@ export class Game {
     this.player.character = this.selected_;
     this.player.animTime = 0;
     const ch = Characters.List[this.selected_];
-    this.paddle.w = ch.paddleW;          // 엘프는 긴 패들
+    this.paddle.w = ch.paddleW;
     this.revivesLeft_ = ch.revives;      // 성녀는 부활 1회
     this.reviving_ = false;
     this.updatePaddle();
@@ -207,17 +229,16 @@ export class Game {
     // 스테이지 시작 대기: 공이 패들 위에 붙어 따라다니다가 시간이 되면 출발
     if (this.serveTimer_ > 0) {
       this.serveTimer_ = Math.max(0, this.serveTimer_ - dt);
-      for (const b of this.balls) {
-        b.pos = new Vec2(this.paddle.bounds().centerX - b.size * 0.5, this.paddle.y - b.size * 1.5);
-      }
+      const n = this.balls.length;
+      this.balls.forEach((b, i) => {
+        const dx = (i - (n - 1) / 2) * SERVE_SPREAD;   // 엘프는 공 3개를 나란히
+        b.pos = new Vec2(this.paddle.bounds().centerX + dx - b.size * 0.5, this.paddle.y - b.size * 1.5);
+      });
       return;
     }
 
     for (const b of this.balls) this.moveBall(b, dt);
-
-    // 아이템으로 생긴 공은 순회가 끝난 뒤 합친다
-    this.balls.push(...this.pendingBalls_);
-    this.pendingBalls_ = [];
+    this.updateItems(dt);
 
     // 아래로 빠진 공 제거
     this.balls = this.balls.filter((b) => b.pos.y <= World.Height);
@@ -248,14 +269,18 @@ export class Game {
 
   // ---------- 내부 ----------
   private startStage(wait: boolean): void {
+    const ch = Characters.List[this.player.character];
     this.balls = [];
-    this.pendingBalls_ = [];
+    this.items = [];
     this.reviving_ = false;
+    this.skillUsed_ = false;
+    this.paddle.w = ch.paddleW;   // 아이템으로 바뀐 패들 길이는 스테이지마다 원래대로
+    this.updatePaddle();
     this.resetBricks();
     this.introTime_ = 0;
     this.spawnDevil();
     const spawn = new Vec2(this.paddle.bounds().centerX, this.paddle.y - BALL_SIZE);
-    this.balls.push(this.makeBall(spawn));
+    for (let i = 0; i < ch.startBalls; i++) this.balls.push(this.makeBall(spawn));   // 엘프는 3개
     this.serveTimer_ = wait ? SERVE_TIME : 0;
   }
 
@@ -423,12 +448,68 @@ export class Game {
     this.score_ += 10;
     this.events_.push('brickBreak');
 
-    // 노란 벽돌은 항상, 일반 벽돌은 확률로 공이 하나 더 (꼬마는 확률 3배)
-    const chance = DROP_CHANCE * Characters.List[this.player.character].dropMul;
-    const drop = k.item || Math.random() < chance;
-    if (drop && this.balls.length + this.pendingBalls_.length < MAX_BALLS) {
-      this.pendingBalls_.push(this.makeBall(new Vec2(r.centerX, r.centerY), this.randomKind()));
+    // 노란 벽돌은 항상, 일반 벽돌은 30% 확률로 아이템이 떨어진다
+    if (k.item || Math.random() < ITEM_CHANCE) {
+      const kind = ITEM_KINDS[randInt(ITEM_KINDS.length)];
+      const it = new Item(kind, 0, 0);
+      it.x = r.centerX - it.w / 2;
+      it.y = r.centerY - it.h / 2;
+      this.items.push(it);
     }
+  }
+
+  // ---------- 아이템 ----------
+  private updateItems(dt: number): void {
+    const pad = this.paddle.bounds();
+    const keep: Item[] = [];
+    for (const it of this.items) {
+      it.y += ITEM_FALL_SPEED * dt;
+      if (it.bounds().intersects(pad)) this.applyItem(it.kind);
+      else if (it.y <= World.Height) keep.push(it);
+    }
+    this.items = keep;
+  }
+
+  private applyItem(kind: ItemKind): void {
+    switch (kind) {
+      case 'ballX2': this.multiplyBalls(2); break;
+      case 'ballX3': this.multiplyBalls(3); break;
+      case 'ballHalf': this.halveBalls(); break;
+      case 'padLong': this.paddle.w = Math.min(PAD_MAX, this.paddle.w * 1.5); break;
+      case 'padShort': this.paddle.w = Math.max(PAD_MIN, this.paddle.w / 3); break;
+    }
+    this.updatePaddle();
+    this.events_.push(ITEM_INFO[kind].good ? 'itemGood' : 'itemBad');
+  }
+
+  // 지금 있는 공마다 (n-1)개씩 더 만든다. 새 공은 같은 자리에서 다른 방향, 색은 무작위
+  private multiplyBalls(n: number): void {
+    const add: Ball[] = [];
+    for (const b of this.balls) {
+      for (let i = 1; i < n; i++) {
+        if (this.balls.length + add.length >= MAX_BALLS) break;
+        add.push(this.cloneBall(b));
+      }
+    }
+    this.balls.push(...add);
+  }
+
+  // 공을 절반으로 (홀수면 올림, 최소 1개). 어느 공이 사라질지는 무작위
+  private halveBalls(): void {
+    const keep = Math.ceil(this.balls.length / 2);
+    const shuffled = [...this.balls].sort(() => Math.random() - 0.5);
+    this.balls = shuffled.slice(0, keep);
+  }
+
+  private cloneBall(src: Ball): Ball {
+    const kind = this.randomKind();
+    const a = (30 + Math.random() * 120) * Math.PI / 180;
+    const ySign = src.vel.y < 0 ? -1 : 1;
+    const b = new Ball(new Vec2(src.pos.x, src.pos.y));
+    b.size = src.size;
+    b.kind = kind;
+    b.vel = new Vec2(Math.cos(a), ySign * Math.sin(a)).scale(this.ballSpeed(kind));
+    return b;
   }
 
   private spawnDevil(): void {
@@ -497,6 +578,7 @@ export class Game {
     this.lastResult_ = result;
     this.best_ = Math.max(this.best_, this.score_);
     this.balls = [];
+    this.items = [];
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');

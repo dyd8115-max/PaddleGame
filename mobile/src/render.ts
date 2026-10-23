@@ -2,7 +2,7 @@
 import { images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
-import { Characters, DevilSprite, World, menuTop } from './game/objects';
+import { Characters, DevilSprite, ITEM_INFO, World, menuTop } from './game/objects';
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
 import { UI, type Overlay } from './ui';
 
@@ -12,6 +12,8 @@ const ROW_COLORS = ['#e65050', '#f0963c', '#50c878', '#50a0f0', '#aa6ee6'];
 const ITEM_COLOR = '#ffe65a';
 const PADDLE_COLOR = '#dcdce6';
 const BALL_COLOR: Record<string, string> = { white: '#ffffff', red: '#ff4d4d', green: '#4ddc7a' };
+const ITEM_GOOD = '#3b82f6';        // 좋은 아이템 (공 늘리기, 패들 길게)
+const ITEM_BAD = '#b23b3b';         // 나쁜 아이템 (공 줄이기, 패들 짧게)
 const WALL_COLOR = '#7c8190';       // 회색 벽 (안 깨짐)
 const WALL_LIGHT = '#a9aebb';
 const WALL_DARK = '#3c404c';
@@ -161,6 +163,8 @@ function drawPlaying(ctx: Ctx, game: Game): void {
     ctx.fillRect(b.centerX - b.w * s / 2, b.centerY - b.h * s / 2, b.w * s, b.h * s);
   }
 
+  drawItems(ctx, game);
+
   const pad = game.paddle.bounds();
   pad.y += game.stompDip();
   outlinedRect(ctx, pad, PADDLE_COLOR);
@@ -177,6 +181,21 @@ function drawPlaying(ctx: Ctx, game: Game): void {
       : game.stage === 2 ? '악마가 패들 위에 올라탔어요! 공을 잘 보세요'
       : '클리어! 공이 더 빨라져요';
     text(ctx, sub, World.Width / 2, my + 50, 16, '#dcdce6');
+  }
+}
+
+// 떨어지는 아이템: 둥근 알약 모양에 효과 글자. 좋은 건 파랑, 나쁜 건 빨강
+function drawItems(ctx: Ctx, game: Game): void {
+  for (const it of game.items) {
+    const r = it.bounds();
+    const info = ITEM_INFO[it.kind];
+    roundRect(ctx, new Rect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3), (r.h + 3) / 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fill();
+    roundRect(ctx, r, r.h / 2);
+    ctx.fillStyle = info.good ? ITEM_GOOD : ITEM_BAD;
+    ctx.fill();
+    text(ctx, info.label, r.centerX, r.centerY + 1, 13, WHITE, { bold: true });
   }
 }
 
@@ -241,7 +260,7 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   if (v.rankingVisible) button(ctx, UI.ranking, '랭킹 보기', false, 17);
 
   text(ctx, '화면 아래쪽을 좌우로 밀어 패들을 움직여요', World.Width / 2, 566, 15, GRAY);
-  text(ctx, '노란 벽돌을 깨면 공이 하나 더 생겨요', World.Width / 2, 592, 15, GRAY);
+  text(ctx, '벽돌을 깨면 아이템이 떨어져요. 패들로 받으세요', World.Width / 2, 592, 15, GRAY);
   ctx.restore();
 }
 
@@ -311,10 +330,27 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
   }
   ctx.stroke();
 
+  // 꼬마 능력 버튼: 누를 수 있으면 노랗게, 출발 전이거나 이미 썼으면 어둡게
+  if (playing && game.hasSkill) {
+    const r = l.skillBtn;
+    const ready = game.skillReady;
+    const pulse = ready ? 1 + 0.04 * Math.sin(v.time * 6) : 1;
+    const pr = new Rect(r.centerX - r.w * pulse / 2, r.centerY - r.h * pulse / 2, r.w * pulse, r.h * pulse);
+    roundRect(ctx, pr, 10);
+    ctx.fillStyle = ready ? ITEM_COLOR : 'rgba(20,22,34,0.75)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = ready ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.18)';
+    ctx.stroke();
+    const used = !ready && game.skillUsed;
+    text(ctx, used ? '사용함' : '공×2', r.centerX, r.centerY + 1, used ? 14 : 17, ready ? '#1e2232' : GRAY, { bold: true });
+  }
+
   if (playing) {
     // 점수와 스테이지. 오른쪽 끝은 토스 버튼 자리라 비워 둠
     const x = l.soundBtn.right + 14;
-    const maxW = l.w - l.insets.right - TOSS_BUTTONS_W - x;
+    const right = game.hasSkill ? l.skillBtn.left - 8 : l.w - l.insets.right - TOSS_BUTTONS_W;
+    const maxW = right - x;
     const y = l.hudTop + HUD_H / 2;
     ctx.save();
     ctx.beginPath();

@@ -96,6 +96,9 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
   brickBreak: 'brick',
   devilStomp: 'stomp',
   revive: 'start',
+  itemGood: 'start',
+  itemBad: 'stomp',
+  skill: 'start',
 };
 
 // ---------- 터치, 마우스 ----------
@@ -118,6 +121,10 @@ canvas.addEventListener('pointerdown', (e) => {
   // 위쪽 버튼은 누르는 즉시 반응
   if (game.state === 'playing' && overlay === 'none' && layout.pauseBtn.contains(lx(e), ly(e))) {
     pause();
+    return;
+  }
+  if (game.state === 'playing' && overlay === 'none' && game.hasSkill && layout.skillBtn.contains(lx(e), ly(e))) {
+    game.useSkill();   // 꼬마: 공 2배
     return;
   }
   if (hudSoundRect().contains(lx(e), ly(e))) {
@@ -175,6 +182,7 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowRight') game.moveSelection(1);
     else if (e.key >= '1' && e.key <= '3') game.selectCharacter(Number(e.key) - 1);
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
+  else if (game.state === 'playing' && overlay === 'none' && (e.key === ' ' || e.key === 's' || e.key === 'S')) game.useSkill();
 });
 
 // ---------- 앱 전환, 뒤로가기 ----------

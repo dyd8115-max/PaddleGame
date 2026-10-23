@@ -15,7 +15,8 @@ export interface CharacterDef {
   name: string;
   fps: number;        // 걷기 애니메이션 속도
   ability: string;    // 메뉴에 보이는 능력 설명
-  dropMul: number;    // 벽돌을 깰 때 공이 하나 더 나올 확률 배율
+  startBalls: number; // 스테이지를 시작할 때 공 수
+  skill: boolean;     // 버튼을 누르면 공 2배 (스테이지마다 한 번)
   paddleW: number;    // 패들 길이
   revives: number;    // 공을 모두 놓쳐도 다시 시작할 수 있는 횟수
 }
@@ -25,9 +26,9 @@ export const Characters = {
   CellW: 67,     // 그리기 크기 (논리 좌표). 그림 파일은 2배 크기
   CellH: 80,
   List: [
-    { name: 'KID', fps: 15, ability: '벽돌을 깰 때 공이 나올 확률 3배', dropMul: 3, paddleW: 80, revives: 0 },
-    { name: 'ELF', fps: 13, ability: '패들이 1.5배 길어서 공을 받기 쉬워요', dropMul: 1, paddleW: 120, revives: 0 },
-    { name: 'SAINT', fps: 16, ability: '공을 다 놓쳐도 한 번 부활해요', dropMul: 1, paddleW: 80, revives: 1 },
+    { name: 'KID', fps: 15, ability: '버튼을 누르면 공이 2배 (스테이지마다 한 번)', startBalls: 1, skill: true, paddleW: 80, revives: 0 },
+    { name: 'ELF', fps: 13, ability: '공 3개로 출발해요', startBalls: 3, skill: false, paddleW: 80, revives: 0 },
+    { name: 'SAINT', fps: 16, ability: '공을 다 놓쳐도 한 번 부활해요', startBalls: 1, skill: false, paddleW: 80, revives: 1 },
   ] as CharacterDef[],
 
   // 시작 메뉴의 캐릭터 카드 위치 (논리 좌표)
@@ -129,7 +130,25 @@ export class Brick {
   constructor(
     public rect: Rect,
     public row: number,
-    public item: boolean,     // 깨지면 공 하나 추가
+    public item: boolean,     // 노란 벽돌: 깨지면 아이템이 꼭 떨어짐
     public appearAt: number,  // 스테이지 시작 후 이 시각(초)에 나타남
   ) {}
+}
+
+// 벽돌에서 떨어지는 아이템. 패들로 받으면 효과가 난다
+export type ItemKind = 'ballX2' | 'ballX3' | 'ballHalf' | 'padLong' | 'padShort';
+export const ITEM_KINDS: ItemKind[] = ['ballX2', 'ballX3', 'ballHalf', 'padLong', 'padShort'];
+export const ITEM_INFO: Record<ItemKind, { label: string; good: boolean }> = {
+  ballX2: { label: '공×2', good: true },
+  ballX3: { label: '공×3', good: true },
+  ballHalf: { label: '공÷2', good: false },
+  padLong: { label: '패들×1.5', good: true },
+  padShort: { label: '패들÷3', good: false },
+};
+
+export class Item {
+  w = 62;
+  h = 22;
+  constructor(public kind: ItemKind, public x: number, public y: number) {}   // x, y 는 왼쪽 위
+  bounds(): Rect { return new Rect(this.x, this.y, this.w, this.h); }
 }

@@ -34,6 +34,7 @@ export interface Layout {
   touch: Rect;        // 아래쪽 조작 공간
   pauseBtn: Rect;
   soundBtn: Rect;
+  skillBtn: Rect;     // 꼬마 능력 버튼 (위쪽 정보 줄 오른쪽, 토스 버튼 왼쪽)
 }
 
 export function makeLayout(w: number, h: number, dpr: number, insets: Insets): Layout {
@@ -52,10 +53,12 @@ export function makeLayout(w: number, h: number, dpr: number, insets: Insets): L
   const btn = 40;
   const by = hudTop + (HUD_H - btn) / 2;
   const left = insets.left + 10;
+  const skillW = 72;
   return {
     w, h, dpr, insets, hudTop, scale, worldH, gx, gy, gw, gh, touch,
     pauseBtn: new Rect(left, by, btn, btn),
     soundBtn: new Rect(left + btn + 8, by, btn, btn),
+    skillBtn: new Rect(w - insets.right - TOSS_BUTTONS_W - 8 - skillW, by, skillW, btn),
   };
 }
 
