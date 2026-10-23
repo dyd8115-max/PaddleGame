@@ -23,13 +23,15 @@ let overlay: Overlay = 'none';
 let clock = 0;
 
 // ---------- 저장 ----------
-const KEY_BEST = 'best';
+const KEY_BEST = (ch: number) => `best${ch}`;   // 캐릭터별 최고 기록
 const KEY_MUTED = 'muted';
 const KEY_CHAR = 'character';
 
 async function loadSaved(): Promise<void> {
-  const [best, muted, ch] = await Promise.all([loadValue(KEY_BEST), loadValue(KEY_MUTED), loadValue(KEY_CHAR)]);
-  game.setBestScore(Number(best) || 0);
+  const [muted, ch, ...bests] = await Promise.all([
+    loadValue(KEY_MUTED), loadValue(KEY_CHAR), ...Characters.List.map((_, i) => loadValue(KEY_BEST(i))),
+  ]);
+  bests.forEach((v, i) => game.setBestRecord(i, Number(v) || 0));
   audio.setMuted(muted === '1');
   const c = Number(ch);
   if (Number.isInteger(c) && c >= 0 && c < Characters.List.length) game.selectCharacter(c);
@@ -80,7 +82,8 @@ function toggleMute(): void {
 
 function finishGame(): void {
   // 게임이 끝날 때마다 최고 점수 저장, 리더보드 제출
-  void saveValue(KEY_BEST, String(game.bestScore));
+  const ch = game.player.character;
+  void saveValue(KEY_BEST(ch), String(game.bestRecord(ch)));
   void submitScore(game.score);
 }
 
@@ -98,14 +101,14 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
   brickHit: 'brick',
   pickup: 'start',
   devilStomp: 'stomp',
-  revive: 'start',
   itemGood: 'start',
   itemBad: 'stomp',
-  skill: 'start',
+  rowAdd: 'stomp',
 };
 
 // ---------- 터치, 마우스 ----------
 let downX = 0, downY = 0, downAt = 0, activePointer = -1;
+let elfWalking = false;   // 엘프 모드에서 지금 손가락이 자리 옮기기 중인지
 
 function hudSoundRect() { return game.state === 'playing' ? layout.soundBtn : layout.pauseBtn; }
 
@@ -129,13 +132,12 @@ canvas.addEventListener('pointerdown', (e) => {
     pause();
     return;
   }
-  if (game.state === 'playing' && overlay === 'none' && game.hasSkill && layout.skillBtn.contains(lx(e), ly(e))) {
-    game.useSkill();   // 꼬마: 공 2배
-    return;
-  }
   if (swipeActive()) {
+    // 엘프: 아래 조작 공간은 걸어서 자리 옮기기, 그 위는 당겨서 조준
     const p = toWorld(layout, lx(e), ly(e));
-    game.swipe!.aimBegin(p.x, p.y);
+    elfWalking = ly(e) >= layout.touch.y;
+    if (elfWalking) game.setPaddleTarget(p.x);
+    else game.swipe!.aimBegin(p.x, p.y);
     return;
   }
   if (hudSoundRect().contains(lx(e), ly(e))) {
@@ -151,7 +153,8 @@ canvas.addEventListener('pointermove', (e) => {
   if (swipeActive()) {
     if (e.pointerId === activePointer) {
       const p = toWorld(layout, lx(e), ly(e));
-      game.swipe!.aimMove(p.x, p.y);
+      if (elfWalking) game.setPaddleTarget(p.x);
+      else game.swipe!.aimMove(p.x, p.y);
     }
     return;
   }
@@ -205,7 +208,6 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowRight') game.moveSelection(1);
     else if (e.key >= '1' && e.key <= '3') game.selectCharacter(Number(e.key) - 1);
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
-  else if (game.state === 'playing' && overlay === 'none' && (e.key === ' ' || e.key === 's' || e.key === 'S')) game.useSkill();
 });
 
 // ---------- 앱 전환, 뒤로가기 ----------

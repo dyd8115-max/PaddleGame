@@ -2,7 +2,7 @@
 import { images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
-import { Characters, DevilSprite, ITEM_INFO, World, menuTop } from './game/objects';
+import { Characters, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
 import { UI, type Overlay } from './ui';
 
@@ -143,6 +143,16 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
   }
 }
 
+// 기록 글자: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 시간
+function formatRecord(mode: GameMode, v: number): string {
+  if (mode === 'swipe') return `${v}발`;
+  if (mode === 'survival') {
+    if (v < 60) return `${v.toFixed(1)}초`;
+    return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
+  }
+  return `STAGE ${v}`;
+}
+
 // ---------- 게임 영역 (논리 좌표) ----------
 // 엘프 모드 벽돌 색: 화면에서 숫자가 클수록 초록 → 노랑 → 빨강
 function hpColor(hp: number, maxHp: number): string {
@@ -216,8 +226,8 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
 
   if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
     const my = World.Height * 0.55;
-    text(ctx, '화면을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });
-    text(ctx, '손을 떼면 발사!', World.Width / 2, my + 32, 16, '#dcdce6');
+    text(ctx, '위쪽을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });
+    text(ctx, '손을 떼면 발사! 아래쪽을 밀면 자리 이동', World.Width / 2, my + 32, 16, '#dcdce6');
   }
 }
 
@@ -228,6 +238,20 @@ function drawPlaying(ctx: Ctx, game: Game, v: View): void {
 
   drawWalls(ctx, game);
 
+  // 성녀: 벽돌이 닿으면 끝나는 선
+  if (game.mode === 'survival') {
+    ctx.save();
+    ctx.setLineDash([10, 8]);
+    ctx.strokeStyle = 'rgba(255,90,90,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, game.dangerY);
+    ctx.lineTo(World.Width, game.dangerY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  const shift = game.brickShift();   // 성녀: 한 줄 내려오는 중
   for (const k of game.bricks) {
     if (!k.alive) continue;
     const r = game.brickReveal(k);
@@ -235,7 +259,7 @@ function drawPlaying(ctx: Ctx, game: Game, v: View): void {
     // 톡 튀어나오는 크기 변화: 0 → 살짝 크게 → 원래 크기
     const c1 = 1.70158, c3 = c1 + 1, u = r - 1;
     const s = 1 + c3 * u * u * u + c1 * u * u;
-    const b = k.rect;
+    const b = new Rect(k.rect.x, k.rect.y + shift, k.rect.w, k.rect.h);
     const color = k.item ? ITEM_COLOR : ROW_COLORS[k.row % ROW_COLORS.length];
     ctx.fillStyle = mix(color, (1 - r) * 0.7);
     ctx.fillRect(b.centerX - b.w * s / 2, b.centerY - b.h * s / 2, b.w * s, b.h * s);
@@ -250,9 +274,9 @@ function drawPlaying(ctx: Ctx, game: Game, v: View): void {
   drawDevil(ctx, game);   // 공과 패들보다 나중에 그려서 공을 가림
 
   const my = World.Height * 0.5;   // 안내 문구는 세계 높이의 가운데쯤
-  if (game.reviving) {
-    text(ctx, '부활!', World.Width / 2, my, 34, '#fff3b0', { bold: true });
-    text(ctx, '성녀의 힘으로 한 번 더 도전해요', World.Width / 2, my + 50, 16, '#dcdce6');
+  if (game.serving && game.mode === 'survival') {
+    text(ctx, '준비!', World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
+    text(ctx, '3초마다 벽돌이 한 줄씩 내려와요', World.Width / 2, my + 50, 16, '#dcdce6');
   } else if (game.serving) {
     text(ctx, `STAGE ${game.stage}`, World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
     const sub = game.stage === 1 ? '준비!'
@@ -326,10 +350,13 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   text(ctx, Characters.List[game.selected].ability, World.Width / 2, 322, 16, ITEM_COLOR, { bold: true });
 
   if (game.lastResult === 'gameover') {
-    const unit = Characters.List[game.player.character].mode === 'swipe' ? '라운드' : '스테이지';
-    text(ctx, `게임 오버  ·  ${unit} ${game.stage}  ·  점수 ${game.score}`, World.Width / 2, 350, 17, '#f06e6e', { bold: true });
+    const lastMode = Characters.List[game.player.character].mode;
+    text(ctx, `게임 오버  ·  ${Characters.List[game.player.character].name}  ${formatRecord(lastMode, game.lastRecord)}`,
+      World.Width / 2, 350, 17, '#f06e6e', { bold: true });
   }
-  text(ctx, `최고 점수 ${game.bestScore}`, World.Width / 2, 376, 15, GRAY);
+  const selMode = Characters.List[game.selected].mode;
+  const selBest = game.bestRecord(game.selected);
+  text(ctx, selBest > 0 ? `최고 기록 ${formatRecord(selMode, selBest)}` : '아직 기록이 없어요', World.Width / 2, 376, 15, GRAY);
 
   // 시작 버튼은 살짝 숨쉬듯 커졌다 작아짐
   const pulse = 1 + 0.03 * Math.sin(v.time * 4);
@@ -410,37 +437,21 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
   }
   ctx.stroke();
 
-  // 꼬마 능력 버튼: 누를 수 있으면 노랗게, 출발 전이거나 이미 썼으면 어둡게
-  if (playing && game.hasSkill) {
-    const r = l.skillBtn;
-    const ready = game.skillReady;
-    const pulse = ready ? 1 + 0.04 * Math.sin(v.time * 6) : 1;
-    const pr = new Rect(r.centerX - r.w * pulse / 2, r.centerY - r.h * pulse / 2, r.w * pulse, r.h * pulse);
-    roundRect(ctx, pr, 10);
-    ctx.fillStyle = ready ? ITEM_COLOR : 'rgba(20,22,34,0.75)';
-    ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = ready ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.18)';
-    ctx.stroke();
-    const used = !ready && game.skillUsed;
-    text(ctx, used ? '사용함' : '공×2', r.centerX, r.centerY + 1, used ? 14 : 17, ready ? '#1e2232' : GRAY, { bold: true });
-  }
-
   if (playing) {
-    // 점수와 스테이지. 오른쪽 끝은 토스 버튼 자리라 비워 둠
+    // 지금 기록과 보조 정보. 오른쪽 끝은 토스 버튼 자리라 비워 둠
     const x = l.soundBtn.right + 14;
-    const right = game.hasSkill ? l.skillBtn.left - 8 : l.w - l.insets.right - TOSS_BUTTONS_W;
-    const maxW = right - x;
+    const maxW = l.w - l.insets.right - TOSS_BUTTONS_W - x;
     const y = l.hudTop + HUD_H / 2;
+    const mode = game.mode;
+    const best = game.bestRecord(game.player.character);
+    const sw = game.swipe;
+    const sub = sw ? `ROUND ${sw.round} · 공 ${sw.ballCount}개` : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, l.hudTop, Math.max(0, maxW), HUD_H);
     ctx.clip();
-    text(ctx, `${game.score}`, x, y - 8, 20, WHITE, { bold: true, align: 'left' });
-    const sw = game.swipe;
-    const extra = Characters.List[game.player.character].revives > 0 ? `   부활 ${game.revivesLeft}` : '';
-    const label = sw ? `ROUND ${sw.round}   공 ${sw.ballCount}` : `STAGE ${game.stage}${extra}`;
-    text(ctx, label, x, y + 12, 12, ITEM_COLOR, { bold: true, align: 'left' });
+    text(ctx, formatRecord(mode, game.record), x, y - 8, 20, WHITE, { bold: true, align: 'left' });
+    text(ctx, sub, x, y + 12, 12, ITEM_COLOR, { bold: true, align: 'left' });
     ctx.restore();
   }
 }
@@ -482,7 +493,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    text(ctx, game.swipe ? '누른 채 아래로 당겨 조준, 놓으면 발사' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
+    text(ctx, game.swipe ? '◀   여기를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
   }
 

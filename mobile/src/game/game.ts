@@ -1,4 +1,5 @@
-// 게임 로직 전체 (PC 버전 Game.cpp 와 같은 규칙). 화면, 입력, 소리에 의존하지 않는다.
+// 게임 로직 전체. 화면, 입력, 소리에 의존하지 않는다.
+// 캐릭터마다 방식이 다르다: 꼬마 stage(가두리 맵), 엘프 swipe(swipe.ts), 성녀 survival(내려오는 벽돌 버티기)
 // 플랫폼 쪽은 입력 전달, update(dt) 호출, 상태를 읽어 그리기, takeEvents() 로 소리 처리만 한다.
 import { Rect, Vec2 } from './geometry';
 import { bounceOff, nudge } from './collide';
@@ -11,13 +12,13 @@ import {
 export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
 export type GameEvent =
-  'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'brickHit' | 'devilStomp' | 'revive' | 'itemGood' | 'itemBad' | 'skill' | 'pickup';
+  'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'brickHit' | 'devilStomp' | 'itemGood' | 'itemBad' | 'pickup' | 'rowAdd';
 
 const BALL_SPEED = 540;     // 1스테이지 공 빠르기 (픽셀/초)
 const SPEED_STEP = 1.3;     // 스테이지마다 1.3배씩 빨라짐
 const SPEED_MAX = 4;        // 하얀 공 기준 최대 4배
 const SPEED_ABS_MAX = 2400; // 빨간 공이라도 이보다 빠르면 화면에서 보이지 않음 (픽셀/초)
-// 아이템이나 능력으로 늘어나는 공의 색 확률 (처음 출발하는 공과 부활 공은 항상 하양)
+// 아이템으로 늘어나는 공의 색 확률 (처음 출발하는 공은 항상 하양)
 const KIND_CHANCE: [BallKind, number][] = [['white', 0.4], ['red', 0.3], ['green', 0.3]];
 const ITEM_CHANCE = 0.3;    // 일반 벽돌을 깰 때 아이템이 떨어질 확률 (노란 벽돌은 항상)
 const ITEM_FALL_SPEED = 170; // 아이템이 떨어지는 빠르기 (픽셀/초)
@@ -41,6 +42,14 @@ const BALL_SIZE = 10;
 const MAX_DT = 1 / 30;
 const WALL_FADE = 0.25;     // 회색 벽이 나타나는 시간
 
+// 성녀 버티기
+const ROW_EVERY = 3;        // 이 시간(초)마다 위에서 벽돌 줄이 하나 생기고 전체가 한 줄 내려옴
+const START_ROWS = 3;       // 처음에 깔려 있는 줄 수
+const ROW_SHIFT_TIME = 0.2; // 한 줄 내려오는 그림 시간
+const DANGER_ABOVE_PADDLE = 150;   // 패들 위 이 높이에 선. 벽돌이 닿으면 끝
+const SURVIVAL_DEVIL_AT = 30;      // 이 시간(초)부터 악마 등장
+const SURVIVAL_ITEM_BRICK = 0.12;  // 새 줄 벽돌이 노란 벽돌일 확률
+
 // 공이 오랫동안 벽돌을 못 깨면 같은 길만 도는 것으로 보고 각도를 살짝 바꾼다
 const NUDGE_AFTER_PADDLE = 5;   // 패들에 맞을 때: 이 시간(초) 동안 못 깼으면
 const NUDGE_AFTER_WALL = 10;    // 패들에 안 오고 벽 사이에 갇혔을 때
@@ -48,20 +57,12 @@ const NUDGE_AFTER_WALL = 10;    // 패들에 안 오고 벽 사이에 갇혔을 
 // 스테이지별 배치: '#' 벽돌, '*' 노란 벽돌(아이템이 꼭 떨어짐), '=' 회색 벽(안 깨짐), '.' 빈칸
 // 꼬마: 가두리 맵. 회색 우리 안에 벽돌을 빽빽하게 넣고 입구만 열어 둔다. 공이 들어가면 안에서 마구 튕기며 와르르 깨진다
 const CAGE_LAYOUTS: string[][] = [
-  // 큰 우리 하나, 넓은 입구. 입구 위 빈 줄에서 공이 마구 튄다
-  ['=########=', '=##*##*##=', '=########=', '=#*####*#=', '=........=', '===....==='],
+  // 큰 우리 하나, 양쪽 아래에 문 두 개. 문 위 빈 줄에서 공이 마구 튄다
+  ['=########=', '=##*##*##=', '=########=', '=#*####*#=', '=........=', '=..====..='],
   // 우리 두 개, 입구도 두 개
   ['=###==###=', '=#*#==#*#=', '=###==###=', '=#*#==#*#=', '=...==...=', '=..====..='],
   // 큰 우리 + 아래에 벽돌 한 줄
   ['=########=', '=#*####*#=', '=########=', '=........=', '===....===', '..........', '.##.**.##.'],
-];
-// 성녀: 회색 벽 없이 벽돌만. 공이 빨라서 순발력으로
-const PLAIN_LAYOUTS: string[][] = [
-  ['########', '##*##*##', '########', '#.####.#', '###**###'],
-  ['...##...', '..#**#..', '.######.', '##*##*##', '########'],
-  ['#.#.#.#.', '.#.#*#.#', '#.#.#.#.', '.#*#.#.#', '#.#.#.#.', '.#.#.#*#'],
-  ['.##..##.', '########', '##*##*##', '.######.', '..####..', '...**...'],
-  ['########', '........', '#*####*#', '........', '########', '#**##**#'],
 ];
 
 const BRICK_TOP = 60;
@@ -75,16 +76,18 @@ export class Game {
   private state_: GameState = 'menu';
   private lastResult_: GameResult = 'none';
   private score_ = 0;
-  private best_ = 0;
+  private best_ = [0, 0, 0];   // 캐릭터별 최고 기록 (스테이지, 쏜 공 수, 버틴 초)
   private stage_ = 1;
   private background_ = -1;
   private serveTimer_ = 0;
   private introTime_ = 0;
   private selected_ = 0;
   private menuTime_ = 0;
-  private revivesLeft_ = 0;   // 성녀: 남은 부활 횟수
-  private reviving_ = false;  // 부활 직후 공이 기다리는 중 (안내 문구용)
-  private skillUsed_ = false; // 꼬마: 이번 스테이지에 능력을 썼는지
+  private lastRecord_ = 0;    // 방금 끝난 판의 기록
+  private survivalTime_ = 0;  // 성녀: 버틴 시간
+  private rowTimer_ = 0;      // 성녀: 다음 줄까지 남은 시간
+  private rowSerial_ = 0;     // 성녀: 줄마다 색을 다르게
+  private shift_ = 0;         // 성녀: 한 줄 내려오는 그림 (1 → 0)
 
   readonly paddle = new Paddle();
   readonly player = new Player();
@@ -107,20 +110,26 @@ export class Game {
   get state(): GameState { return this.state_; }
   get lastResult(): GameResult { return this.lastResult_; }
   get score(): number { return this.score_; }
-  get bestScore(): number { return this.best_; }
+  get mode() { return Characters.List[this.player.character].mode; }
+  bestRecord(ch: number): number { return this.best_[ch]; }
+  get lastRecord(): number { return this.lastRecord_; }
+  get survivalTime(): number { return this.survivalTime_; }
+  get dangerY(): number { return this.paddle.y - DANGER_ABOVE_PADDLE; }
+  // 지금 판의 기록: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 초
+  get record(): number {
+    if (this.mode === 'swipe') return this.swipe ? this.swipe.shots : this.lastRecord_;
+    if (this.mode === 'survival') return Math.floor(this.survivalTime_ * 10) / 10;
+    return this.stage_;
+  }
+  // 성녀: 줄이 내려오는 중이면 벽돌을 위로 조금 올려 그린다
+  brickShift(): number {
+    return -(BRICK_HEIGHT + BRICK_GAP) * Math.pow(this.shift_, 3);
+  }
   get stage(): number { return this.stage_; }
   get background(): number { return this.background_; }
   get serving(): boolean { return this.serveTimer_ > 0; }
   get selected(): number { return this.selected_; }
   get menuTime(): number { return this.menuTime_; }
-  get revivesLeft(): number { return this.revivesLeft_; }
-  get reviving(): boolean { return this.reviving_ && this.serveTimer_ > 0; }
-  get hasSkill(): boolean { return this.state_ === 'playing' && Characters.List[this.player.character].skill; }
-  get skillUsed(): boolean { return this.skillUsed_; }
-  // 꼬마 능력 버튼을 지금 누를 수 있는지 (공이 출발한 뒤, 스테이지마다 한 번)
-  get skillReady(): boolean {
-    return this.state_ === 'playing' && this.hasSkill && !this.skillUsed_ && this.serveTimer_ <= 0;
-  }
 
   brickReveal(k: Brick): number {
     const t = (this.introTime_ - k.appearAt) / POP_TIME;
@@ -157,7 +166,7 @@ export class Game {
   }
 
   // ---------- 입력 ----------
-  setBestScore(v: number): void { this.best_ = Math.max(this.best_, v); }
+  setBestRecord(ch: number, v: number): void { this.best_[ch] = Math.max(this.best_[ch], v); }
 
   setPaddleTarget(x: number): void { this.paddle.targetX = x; }
 
@@ -185,15 +194,6 @@ export class Game {
     return false;
   }
 
-  // 꼬마 능력: 공 2배. 썼으면 true
-  useSkill(): boolean {
-    if (!this.skillReady) return false;
-    this.skillUsed_ = true;
-    this.multiplyBalls(2);
-    this.events_.push('skill');
-    return true;
-  }
-
   startGame(): void {
     if (this.state_ !== 'menu') return;
     this.score_ = 0;
@@ -203,18 +203,15 @@ export class Game {
     this.player.animTime = 0;
     const ch = Characters.List[this.selected_];
     this.paddle.w = ch.paddleW;
-    this.revivesLeft_ = ch.revives;      // 성녀는 부활 1회
-    this.reviving_ = false;
     this.updatePaddle();
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
     this.player.walking = false;
 
     this.pickBackground();   // 게임마다 배경을 무작위로
+    this.swipe = null;
     if (ch.mode === 'swipe') this.startSwipe();
-    else {
-      this.swipe = null;
-      this.startStage(true);
-    }
+    else if (ch.mode === 'survival') this.startSurvival();
+    else this.startStage(true);
     this.state_ = 'playing';
     this.events_.push('start');
   }
@@ -234,8 +231,47 @@ export class Game {
         if (broken) this.score_ += 10;
       },
       pickup: () => this.events_.push('pickup'),
+      rowsAdded: () => this.events_.push('rowAdd'),
       gameOver: () => this.endGame('gameover'),
     });
+  }
+
+  // 성녀 모드: 회색 벽 없이, 몇 줄 깔고 시작. 3초마다 위에서 새 줄
+  private startSurvival(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.survivalTime_ = 0;
+    this.rowSerial_ = 0;
+    this.shift_ = 0;
+    this.introTime_ = 0;
+    for (let i = 0; i < START_ROWS; i++) this.addRow(false);
+    this.rowTimer_ = ROW_EVERY;
+    const spawn = new Vec2(this.paddle.bounds().centerX, this.paddle.y - BALL_SIZE);
+    this.balls.push(this.makeBall(spawn));
+    this.serveTimer_ = SERVE_TIME;
+  }
+
+  // 있던 벽돌을 모두 한 줄 내리고 맨 위에 새 줄. 벽돌 수는 1~8개 무작위
+  private addRow(animate: boolean): void {
+    const step = BRICK_HEIGHT + BRICK_GAP;
+    for (const k of this.bricks) k.rect.y += step;
+    const cols = 8;
+    const w = (World.Width - BRICK_MARGIN * 2 - BRICK_GAP * (cols - 1)) / cols;
+    const count = 1 + randInt(cols);
+    const pick = [...Array(cols).keys()].sort(() => Math.random() - 0.5).slice(0, count);
+    for (const c of pick) {
+      const rect = new Rect(BRICK_MARGIN + c * (w + BRICK_GAP), BRICK_TOP, w, BRICK_HEIGHT);
+      this.bricks.push(new Brick(rect, this.rowSerial_, Math.random() < SURVIVAL_ITEM_BRICK, this.introTime_ + Math.random() * 0.25));
+    }
+    this.rowSerial_++;
+    this.bricks = this.bricks.filter((k) => k.alive);
+    if (animate) {
+      this.shift_ = 1;
+      this.events_.push('rowAdd');
+    }
   }
 
   // 일시정지 화면에서 그만두기: 게임 오버 소리 없이 메뉴로
@@ -254,13 +290,14 @@ export class Game {
     }
 
     if (this.swipe) {
-      this.swipe.update(dt);
-      if (this.swipe) {
-        this.stage_ = this.swipe.round;
-        this.paddle.targetX = this.swipe.launchX;   // 엘프는 다음에 쏠 자리로 걸어감
+      // 엘프: 조준 단계에서만 걸어서 쏠 자리를 옮긴다
+      if (this.swipe.phase === 'aim') {
         this.updatePaddle();
-        this.updatePlayer(dt);
+        this.swipe.launchX = this.paddle.bounds().centerX;
       }
+      this.updatePlayer(dt);
+      this.swipe.update(dt);
+      if (this.swipe) this.stage_ = this.swipe.round;
       return;
     }
 
@@ -285,17 +322,12 @@ export class Game {
     this.balls = this.balls.filter((b) => b.pos.y <= World.Height);
 
     if (this.balls.length === 0) {
-      if (this.revivesLeft_ > 0) {
-        // 성녀: 벽돌은 그대로 두고 패들 위에서 공을 다시 출발
-        this.revivesLeft_--;
-        this.reviving_ = true;
-        const spawn = new Vec2(this.paddle.bounds().centerX, this.paddle.y - BALL_SIZE);
-        this.balls.push(this.makeBall(spawn));
-        this.serveTimer_ = SERVE_TIME;
-        this.events_.push('revive');
-        return;
-      }
       this.endGame('gameover');
+      return;
+    }
+
+    if (this.mode === 'survival') {
+      this.updateSurvival(dt);
       return;
     }
 
@@ -308,13 +340,25 @@ export class Game {
     }
   }
 
+  // 성녀: 시간 재기, 3초마다 새 줄, 선에 닿으면 끝
+  private updateSurvival(dt: number): void {
+    this.survivalTime_ += dt;
+    this.shift_ = Math.max(0, this.shift_ - dt / ROW_SHIFT_TIME);
+    if (!this.devil.active && this.survivalTime_ >= SURVIVAL_DEVIL_AT) this.spawnDevilNow();
+    this.rowTimer_ -= dt;
+    const empty = !this.bricks.some((k) => k.alive);
+    if (this.rowTimer_ <= 0 || empty) {
+      this.addRow(true);
+      this.rowTimer_ = ROW_EVERY;
+    }
+    if (this.bricks.some((k) => k.alive && k.rect.bottom > this.dangerY)) this.endGame('gameover');
+  }
+
   // ---------- 내부 ----------
   private startStage(wait: boolean): void {
     const ch = Characters.List[this.player.character];
     this.balls = [];
     this.items = [];
-    this.reviving_ = false;
-    this.skillUsed_ = false;
     this.paddle.w = ch.paddleW;   // 아이템으로 바뀐 패들 길이는 스테이지마다 원래대로
     this.updatePaddle();
     this.resetBricks();
@@ -339,8 +383,7 @@ export class Game {
 
   private resetBricks(): void {
     this.bricks = [];
-    const layouts = Characters.List[this.player.character].map === 'cage' ? CAGE_LAYOUTS : PLAIN_LAYOUTS;
-    const layout = layouts[(this.stage_ - 1) % layouts.length];
+    const layout = CAGE_LAYOUTS[(this.stage_ - 1) % CAGE_LAYOUTS.length];
     const cols = layout[0].length;
     const w = (World.Width - BRICK_MARGIN * 2 - BRICK_GAP * (cols - 1)) / cols;
     const cell = (r: number, c: number) =>
@@ -529,6 +572,11 @@ export class Game {
   private spawnDevil(): void {
     this.devil = new Devil();
     if (this.stage_ < DEVIL_FROM_STAGE) return;
+    this.spawnDevilNow();
+  }
+
+  private spawnDevilNow(): void {
+    this.devil = new Devil();
     const d = this.devil;
     const speed = Math.min(DEVIL_WALK_MAX, DEVIL_WALK_SPEED + 4 * (this.stage_ - DEVIL_FROM_STAGE));
     d.active = true;
@@ -590,7 +638,9 @@ export class Game {
 
   private endGame(result: GameResult): void {
     this.lastResult_ = result;
-    this.best_ = Math.max(this.best_, this.score_);
+    this.lastRecord_ = this.record;
+    const ch = this.player.character;
+    this.best_[ch] = Math.max(this.best_[ch], this.lastRecord_);
     this.balls = [];
     this.items = [];
     this.swipe = null;

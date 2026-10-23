@@ -1,8 +1,9 @@
 // 엘프 모드: 직접 조준해서 쏘는 스와이프 벽돌깨기
 //
-// - 화면을 누른 채 아래로 당기면 반대쪽(위)으로 조준선이 보이고, 손을 떼면 가진 공을 차례로 쏜다
+// - 아래쪽을 밀면 엘프가 걸어가 쏠 자리를 고르고, 위쪽을 누른 채 아래로 당기면 반대쪽으로 조준선이 보인다
+// - 손을 떼면 가진 공을 차례로 쏜다. 기록은 지금까지 쏜 공 수
 // - 벽돌의 숫자만큼 맞혀야 깨진다. 초록 동그라미(+1)를 지나가면 다음 차례부터 공이 하나 늘어난다
-// - 공이 모두 바닥에 돌아오면 벽돌이 한 줄 내려오고 위에 새 줄이 생긴다. 벽돌이 바닥에 닿으면 끝
+// - 공이 모두 바닥에 돌아오면 새 벽돌 줄이 1~3줄(50%, 30%, 20%) 생기면서 한꺼번에 내려온다. 바닥선에 닿으면 끝
 // - 공 빠르기는 라운드와 상관없이 일정하다 (한 차례가 오래 걸리면 빨라지기만 함)
 import { Rect, Vec2 } from './geometry';
 import { Ball, World } from './objects';
@@ -14,6 +15,7 @@ export interface SwipeHost {
   floorY(): number;             // 공이 굴러와 멈추는 바닥 높이 (공 아랫면)
   brickHit(broken: boolean): void;
   pickup(): void;
+  rowsAdded(): void;
   gameOver(): void;
 }
 
@@ -32,7 +34,8 @@ const LAUNCH_GAP = 0.075;     // 공을 한 개씩 쏘는 간격 (초)
 const FAST_AFTER = 8;         // 한 차례가 이 시간(초)보다 길어지면 공을 2배 빠르게
 const MIN_AIM = 10 * Math.PI / 180;   // 너무 눕혀 쏘지 못하게
 const PULL_MIN = 22;          // 이만큼은 당겨야 조준
-const SLIDE_TIME = 0.28;      // 벽돌이 한 줄 내려오는 시간
+const SLIDE_TIME = 0.22;      // 벽돌이 한 줄 내려오는 시간 (여러 줄이면 조금 더 길게)
+const ROWS_CHANCE = [0.5, 0.3, 0.2];   // 한 차례 뒤 새로 생기는 줄 수 1, 2, 3 의 확률
 const NUDGE_AFTER = 6;        // 벽돌을 못 맞히고 벽만 튕기는 시간이 길면 방향을 살짝 바꿈
 
 const randInt = (n: number) => Math.floor(Math.random() * n);
@@ -49,7 +52,9 @@ export class Swipe {
   phase: SwipePhase = 'aim';
   round = 1;
   ballCount = 1;            // 가진 공 수
-  launchX = World.Width / 2; // 다음에 쏠 자리 (공 가운데 x)
+  launchX = World.Width / 2; // 쏠 자리 (공 가운데 x). 조준 단계에서 엘프가 걸어가 정한다
+  shots = 0;                 // 지금까지 쏜 공 수 (기록)
+  newRows = 1;               // 이번에 새로 생긴 줄 수 (내려오는 그림용)
   bricks: SwipeBrick[] = [];
   pickups: Pickup[] = [];
   balls: Ball[] = [];        // 날아가는 공
@@ -62,12 +67,11 @@ export class Swipe {
   private aimTo = new Vec2();
   private shotDir = new Vec2(0, -1);
   private launchTimer = 0;
-  private nextLaunchX: number | null = null;
   private turnTime = 0;
   private fast = false;
 
   constructor(private host: SwipeHost) {
-    this.spawnRow();
+    this.spawnRow(0);
   }
 
   // ---------- 위치 ----------
@@ -79,7 +83,7 @@ export class Swipe {
   drawRect(col: number, row: number): Rect {
     const r = this.cellRect(col, row);
     const t = 1 - Math.pow(1 - this.slide, 3);
-    r.y -= (1 - t) * ROW_H;
+    r.y -= (1 - t) * ROW_H * this.newRows;
     return r;
   }
 
@@ -163,14 +167,14 @@ export class Swipe {
     this.toLaunch = this.ballCount;
     this.launchTimer = 0;
     this.collected = 0;
-    this.nextLaunchX = null;
     this.turnTime = 0;
     this.fast = false;
+    this.shots += this.ballCount;
   }
 
   update(dt: number): void {
     if (this.phase === 'advance') {
-      this.slide = Math.min(1, this.slide + dt / SLIDE_TIME);
+      this.slide = Math.min(1, this.slide + dt / (SLIDE_TIME * (1 + 0.5 * (this.newRows - 1))));
       if (this.slide >= 1) {
         this.phase = 'aim';
         if (this.bricks.some((k) => k.row > this.lastRow)) this.host.gameOver();
@@ -216,13 +220,7 @@ export class Swipe {
       if (collideBorders(b) && b.idle > NUDGE_AFTER) nudge(b);
       this.collideBricks(b);
       this.collectPickups(b);
-      if (b.vel.y > 0 && b.pos.y + b.size >= floor) {
-        // 처음 돌아온 공 자리가 다음에 쏠 자리
-        if (this.nextLaunchX === null) {
-          this.nextLaunchX = Math.max(BALL_SIZE, Math.min(World.Width - BALL_SIZE, b.pos.x + b.size / 2));
-        }
-        return true;
-      }
+      if (b.vel.y > 0 && b.pos.y + b.size >= floor) return true;
     }
     return false;
   }
@@ -253,25 +251,32 @@ export class Swipe {
 
   private endTurn(): void {
     this.ballCount += this.collected;
-    if (this.nextLaunchX !== null) this.launchX = this.nextLaunchX;
     this.round++;
-    for (const k of this.bricks) k.row++;
-    for (const p of this.pickups) p.row++;
+    // 새 줄 수: 1줄 50%, 2줄 30%, 3줄 20%
+    let r = Math.random(), k = 1;
+    for (let i = 0; i < ROWS_CHANCE.length; i++) {
+      if (r < ROWS_CHANCE[i]) { k = i + 1; break; }
+      r -= ROWS_CHANCE[i];
+    }
+    for (const b of this.bricks) b.row += k;
+    for (const p of this.pickups) p.row += k;
     this.pickups = this.pickups.filter((p) => p.row <= this.lastRow);   // 바닥까지 온 +1 은 사라짐
-    this.spawnRow();
+    for (let row = 0; row < k; row++) this.spawnRow(row);
+    this.newRows = k;
     this.slide = 0;
     this.phase = 'advance';
+    this.host.rowsAdded();
   }
 
-  // 맨 위에 새 줄: 벽돌 2~6개 (라운드가 오를수록 많아짐), 숫자는 라운드 (가끔 2배), +1 하나
-  private spawnRow(): void {
+  // 새 줄: 벽돌 수는 1~6개 무작위, 숫자는 라운드 (가끔 2배), 빈칸 하나에 +1
+  private spawnRow(row: number): void {
     const n = this.round;
-    const count = Math.min(6, 2 + randInt(3) + (n >= 15 ? 1 : 0) + (n >= 30 ? 1 : 0));
+    const count = 1 + randInt(COLS - 1);
     const cols = [...Array(COLS).keys()].sort(() => Math.random() - 0.5);
     for (let i = 0; i < count; i++) {
       const hp = n >= 5 && Math.random() < 0.2 ? n * 2 : n;
-      this.bricks.push(new SwipeBrick(cols[i], 0, hp));
+      this.bricks.push(new SwipeBrick(cols[i], row, hp));
     }
-    this.pickups.push(new Pickup(cols[count], 0));
+    this.pickups.push(new Pickup(cols[count], row));
   }
 }
