@@ -70,6 +70,7 @@ function start(): void {
 
 function pause(): void {
   if (game.state === 'playing' && overlay === 'none') overlay = 'pause';
+  game.swipe?.aimCancel();
 }
 
 function toggleMute(): void {
@@ -94,6 +95,8 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
   stageClear: 'clear',
   gameOver: 'over',
   brickBreak: 'brick',
+  brickHit: 'brick',
+  pickup: 'start',
   devilStomp: 'stomp',
   revive: 'start',
   itemGood: 'start',
@@ -107,9 +110,12 @@ let downX = 0, downY = 0, downAt = 0, activePointer = -1;
 function hudSoundRect() { return game.state === 'playing' ? layout.soundBtn : layout.pauseBtn; }
 
 function movePaddle(x: number): void {
-  if (game.state !== 'playing' || overlay !== 'none') return;
+  if (game.state !== 'playing' || overlay !== 'none' || game.swipe) return;
   game.setPaddleTarget(toWorld(layout, x, 0).x);
 }
+
+// 엘프 모드: 누른 채 당겨서 조준
+function swipeActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.swipe !== null; }
 
 canvas.addEventListener('pointerdown', (e) => {
   audio.unlock();   // 휴대폰은 첫 터치 뒤에야 소리를 낼 수 있음
@@ -127,6 +133,11 @@ canvas.addEventListener('pointerdown', (e) => {
     game.useSkill();   // 꼬마: 공 2배
     return;
   }
+  if (swipeActive()) {
+    const p = toWorld(layout, lx(e), ly(e));
+    game.swipe!.aimBegin(p.x, p.y);
+    return;
+  }
   if (hudSoundRect().contains(lx(e), ly(e))) {
     toggleMute();
     return;
@@ -137,6 +148,13 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   // 마우스는 누르지 않아도 따라오고, 터치는 누른 손가락만
   if (e.pointerType === 'touch' && e.pointerId !== activePointer) return;
+  if (swipeActive()) {
+    if (e.pointerId === activePointer) {
+      const p = toWorld(layout, lx(e), ly(e));
+      game.swipe!.aimMove(p.x, p.y);
+    }
+    return;
+  }
   movePaddle(lx(e));
 });
 
@@ -163,6 +181,11 @@ function onTap(x: number, y: number): void {
 function endPointer(e: PointerEvent): void {
   if (e.pointerId !== activePointer) return;
   activePointer = -1;
+  if (swipeActive()) {
+    if (e.type === 'pointerup') game.swipe!.aimRelease();
+    else game.swipe!.aimCancel();
+    return;
+  }
   const moved = Math.hypot(lx(e) - downX, ly(e) - downY);
   if (e.type === 'pointerup' && moved < 12 && performance.now() - downAt < 600) onTap(lx(e), ly(e));
 }
@@ -207,6 +230,7 @@ onBack(() => {
 
 // ---------- 게임 루프 ----------
 let last = performance.now();
+let lastBrickSound = -1;
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -216,7 +240,11 @@ function frame(now: number): void {
   else if (game.state === 'menu') game.update(dt);   // 메뉴 카드 움직임은 계속
 
   for (const e of game.takeEvents()) {
-    audio.play(SOUND_OF[e]);
+    const name = SOUND_OF[e];
+    // 공이 많을 때 같은 소리가 한꺼번에 겹치지 않게
+    if (name === 'brick' && clock - lastBrickSound < 0.04) continue;
+    if (name === 'brick') lastBrickSound = clock;
+    audio.play(name);
     if (e === 'gameOver') finishGame();
   }
 

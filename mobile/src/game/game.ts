@@ -1,6 +1,8 @@
 // 게임 로직 전체 (PC 버전 Game.cpp 와 같은 규칙). 화면, 입력, 소리에 의존하지 않는다.
 // 플랫폼 쪽은 입력 전달, update(dt) 호출, 상태를 읽어 그리기, takeEvents() 로 소리 처리만 한다.
 import { Rect, Vec2 } from './geometry';
+import { bounceOff, nudge } from './collide';
+import { Swipe } from './swipe';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -8,7 +10,8 @@ import {
 
 export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
-export type GameEvent = 'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'devilStomp' | 'revive' | 'itemGood' | 'itemBad' | 'skill';
+export type GameEvent =
+  'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'brickHit' | 'devilStomp' | 'revive' | 'itemGood' | 'itemBad' | 'skill' | 'pickup';
 
 const BALL_SPEED = 540;     // 1스테이지 공 빠르기 (픽셀/초)
 const SPEED_STEP = 1.3;     // 스테이지마다 1.3배씩 빨라짐
@@ -21,7 +24,6 @@ const ITEM_FALL_SPEED = 170; // 아이템이 떨어지는 빠르기 (픽셀/초)
 const MAX_BALLS = 30;       // 화면에 동시에 있을 수 있는 공 수
 const PAD_MIN = 24;         // 패들 길이 한계 (짧게 아이템을 여러 번 받아도)
 const PAD_MAX = 240;        // (길게 아이템을 여러 번 받아도 화면 절반까지)
-const SERVE_SPREAD = 16;    // 시작 공이 여러 개일 때 패들 위에서 벌려 놓는 간격
 const SERVE_TIME = 1.4;     // 스테이지 시작 전 공이 기다리는 시간
 const FILL_TIME = 0.9;      // 벽돌이 모두 나타나기까지 걸리는 시간
 const POP_TIME = 0.16;      // 벽돌 하나가 톡 튀어나오는 시간
@@ -42,18 +44,24 @@ const WALL_FADE = 0.25;     // 회색 벽이 나타나는 시간
 // 공이 오랫동안 벽돌을 못 깨면 같은 길만 도는 것으로 보고 각도를 살짝 바꾼다
 const NUDGE_AFTER_PADDLE = 5;   // 패들에 맞을 때: 이 시간(초) 동안 못 깼으면
 const NUDGE_AFTER_WALL = 10;    // 패들에 안 오고 벽 사이에 갇혔을 때
-const NUDGE_MIN = 8 * Math.PI / 180;
-const NUDGE_MAX = 20 * Math.PI / 180;
-const MIN_ANGLE = 30 * Math.PI / 180;   // 공이 수평에 가까워지지 않게 (출발 각도와 같은 기준)
 
 // 스테이지별 배치: '#' 벽돌, '*' 노란 벽돌(아이템이 꼭 떨어짐), '=' 회색 벽(안 깨짐), '.' 빈칸
-// 회색 벽은 벽돌 아래에 짧게 한 줄만 두어 공이 튀는 방향만 바꾼다. 5스테이지마다 반복
-const LAYOUTS: string[][] = [
-  ['########', '##*##*##', '########', '#.####.#', '###**###', '........', '...==...'],
-  ['...##...', '..#**#..', '.######.', '##*##*##', '########', '........', '==....=='],
-  ['#.#.#.#.', '.#.#*#.#', '#.#.#.#.', '.#*#.#.#', '#.#.#.#.', '.#.#.#*#', '........', '.==..==.'],
-  ['.##..##.', '########', '##*##*##', '.######.', '..####..', '...**...', '........', '=..==..='],
-  ['########', '........', '#*####*#', '........', '########', '#**##**#', '........', '..=..=..'],
+// 꼬마: 가두리 맵. 회색 우리 안에 벽돌을 빽빽하게 넣고 입구만 열어 둔다. 공이 들어가면 안에서 마구 튕기며 와르르 깨진다
+const CAGE_LAYOUTS: string[][] = [
+  // 큰 우리 하나, 넓은 입구. 입구 위 빈 줄에서 공이 마구 튄다
+  ['=########=', '=##*##*##=', '=########=', '=#*####*#=', '=........=', '===....==='],
+  // 우리 두 개, 입구도 두 개
+  ['=###==###=', '=#*#==#*#=', '=###==###=', '=#*#==#*#=', '=...==...=', '=..====..='],
+  // 큰 우리 + 아래에 벽돌 한 줄
+  ['=########=', '=#*####*#=', '=########=', '=........=', '===....===', '..........', '.##.**.##.'],
+];
+// 성녀: 회색 벽 없이 벽돌만. 공이 빨라서 순발력으로
+const PLAIN_LAYOUTS: string[][] = [
+  ['########', '##*##*##', '########', '#.####.#', '###**###'],
+  ['...##...', '..#**#..', '.######.', '##*##*##', '########'],
+  ['#.#.#.#.', '.#.#*#.#', '#.#.#.#.', '.#*#.#.#', '#.#.#.#.', '.#.#.#*#'],
+  ['.##..##.', '########', '##*##*##', '.######.', '..####..', '...**...'],
+  ['########', '........', '#*####*#', '........', '########', '#**##**#'],
 ];
 
 const BRICK_TOP = 60;
@@ -85,6 +93,7 @@ export class Game {
   items: Item[] = [];   // 떨어지는 아이템
   bricks: Brick[] = [];
   walls: Rect[] = [];   // 회색 벽 (깨지지 않음)
+  swipe: Swipe | null = null;   // 엘프 모드일 때만
   private events_: GameEvent[] = [];
 
   constructor() {
@@ -106,7 +115,7 @@ export class Game {
   get menuTime(): number { return this.menuTime_; }
   get revivesLeft(): number { return this.revivesLeft_; }
   get reviving(): boolean { return this.reviving_ && this.serveTimer_ > 0; }
-  get hasSkill(): boolean { return Characters.List[this.player.character].skill; }
+  get hasSkill(): boolean { return this.state_ === 'playing' && Characters.List[this.player.character].skill; }
   get skillUsed(): boolean { return this.skillUsed_; }
   // 꼬마 능력 버튼을 지금 누를 수 있는지 (공이 출발한 뒤, 스테이지마다 한 번)
   get skillReady(): boolean {
@@ -201,9 +210,32 @@ export class Game {
     this.player.walking = false;
 
     this.pickBackground();   // 게임마다 배경을 무작위로
-    this.startStage(true);
+    if (ch.mode === 'swipe') this.startSwipe();
+    else {
+      this.swipe = null;
+      this.startStage(true);
+    }
     this.state_ = 'playing';
     this.events_.push('start');
+  }
+
+  // 엘프 모드: 패들과 악마 없이, 바닥에서 직접 조준해서 쏜다
+  private startSwipe(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.swipe = new Swipe({
+      floorY: () => this.paddle.y + this.paddle.h,
+      brickHit: (broken) => {
+        this.events_.push(broken ? 'brickBreak' : 'brickHit');
+        if (broken) this.score_ += 10;
+      },
+      pickup: () => this.events_.push('pickup'),
+      gameOver: () => this.endGame('gameover'),
+    });
   }
 
   // 일시정지 화면에서 그만두기: 게임 오버 소리 없이 메뉴로
@@ -221,6 +253,17 @@ export class Game {
       return;
     }
 
+    if (this.swipe) {
+      this.swipe.update(dt);
+      if (this.swipe) {
+        this.stage_ = this.swipe.round;
+        this.paddle.targetX = this.swipe.launchX;   // 엘프는 다음에 쏠 자리로 걸어감
+        this.updatePaddle();
+        this.updatePlayer(dt);
+      }
+      return;
+    }
+
     this.updatePaddle();
     this.updatePlayer(dt);
     this.introTime_ += dt;
@@ -229,11 +272,9 @@ export class Game {
     // 스테이지 시작 대기: 공이 패들 위에 붙어 따라다니다가 시간이 되면 출발
     if (this.serveTimer_ > 0) {
       this.serveTimer_ = Math.max(0, this.serveTimer_ - dt);
-      const n = this.balls.length;
-      this.balls.forEach((b, i) => {
-        const dx = (i - (n - 1) / 2) * SERVE_SPREAD;   // 엘프는 공 3개를 나란히
-        b.pos = new Vec2(this.paddle.bounds().centerX + dx - b.size * 0.5, this.paddle.y - b.size * 1.5);
-      });
+      for (const b of this.balls) {
+        b.pos = new Vec2(this.paddle.bounds().centerX - b.size * 0.5, this.paddle.y - b.size * 1.5);
+      }
       return;
     }
 
@@ -280,7 +321,7 @@ export class Game {
     this.introTime_ = 0;
     this.spawnDevil();
     const spawn = new Vec2(this.paddle.bounds().centerX, this.paddle.y - BALL_SIZE);
-    for (let i = 0; i < ch.startBalls; i++) this.balls.push(this.makeBall(spawn));   // 엘프는 3개
+    this.balls.push(this.makeBall(spawn));
     this.serveTimer_ = wait ? SERVE_TIME : 0;
   }
 
@@ -291,13 +332,15 @@ export class Game {
   }
 
   private ballSpeed(kind: BallKind = 'white'): number {
-    const white = BALL_SPEED * Math.min(SPEED_MAX, Math.pow(SPEED_STEP, this.stage_ - 1));
+    const mul = Characters.List[this.player.character].speedMul;   // 성녀는 1.5배
+    const white = BALL_SPEED * mul * Math.min(SPEED_MAX, Math.pow(SPEED_STEP, this.stage_ - 1));
     return Math.min(SPEED_ABS_MAX, white * BALL_SPEED_MUL[kind]);
   }
 
   private resetBricks(): void {
     this.bricks = [];
-    const layout = LAYOUTS[(this.stage_ - 1) % LAYOUTS.length];
+    const layouts = Characters.List[this.player.character].map === 'cage' ? CAGE_LAYOUTS : PLAIN_LAYOUTS;
+    const layout = layouts[(this.stage_ - 1) % layouts.length];
     const cols = layout[0].length;
     const w = (World.Width - BRICK_MARGIN * 2 - BRICK_GAP * (cols - 1)) / cols;
     const cell = (r: number, c: number) =>
@@ -370,44 +413,15 @@ export class Game {
     }
   }
 
-  // 공을 사각형 밖으로 밀어내고, 부딪친 면 쪽으로 튕긴다 (입사각 = 반사각)
-  private bounceOff(b: Ball, r: Rect): void {
-    const br = b.bounds();
-    const overlapX = Math.min(br.right, r.right) - Math.max(br.left, r.left);
-    const overlapY = Math.min(br.bottom, r.bottom) - Math.max(br.top, r.top);
-    // 겹친 폭이 작은 축이 실제로 부딪친 면
-    if (overlapX < overlapY) {
-      const fromLeft = br.centerX < r.centerX;
-      b.vel.x = fromLeft ? -Math.abs(b.vel.x) : Math.abs(b.vel.x);
-      b.pos.x += fromLeft ? -overlapX - 0.01 : overlapX + 0.01;
-    } else {
-      const fromTop = br.centerY < r.centerY;
-      b.vel.y = fromTop ? -Math.abs(b.vel.y) : Math.abs(b.vel.y);
-      b.pos.y += fromTop ? -overlapY - 0.01 : overlapY + 0.01;
-    }
-  }
-
   // 회색 벽: 튕기기만 하고 깨지지 않는다. 벽 사이에 오래 갇혀 있으면 각도를 살짝 바꾼다
   private collideSolids(b: Ball): void {
     for (const r of this.walls) {
       if (!r.intersects(b.bounds())) continue;
-      this.bounceOff(b, r);
-      if (b.idle > NUDGE_AFTER_WALL) this.nudge(b);
+      bounceOff(b, r);
+      if (b.idle > NUDGE_AFTER_WALL) nudge(b);
     }
   }
 
-  // 같은 길만 계속 도는 공의 방향을 8~20° 돌린다. 너무 눕지 않게 30°~150° 안에서
-  private nudge(b: Ball): void {
-    b.idle = 0;
-    const speed = b.vel.length();
-    const ySign = b.vel.y < 0 ? -1 : 1;
-    const a0 = Math.atan2(Math.abs(b.vel.y), b.vel.x);   // 수평에서 잰 각 (0~180°)
-    const d = (NUDGE_MIN + Math.random() * (NUDGE_MAX - NUDGE_MIN)) * (Math.random() < 0.5 ? -1 : 1);
-    let a = a0 + d;
-    if (a < MIN_ANGLE || a > Math.PI - MIN_ANGLE) a = a0 - d;
-    a = Math.max(MIN_ANGLE, Math.min(Math.PI - MIN_ANGLE, a));
-    b.vel = new Vec2(Math.cos(a) * speed, ySign * Math.sin(a) * speed);
-  }
 
   private collideWalls(b: Ball): void {
     // 좌우 벽: x 성분만 반전
@@ -432,7 +446,7 @@ export class Game {
     b.pos.y = this.paddle.y - b.size;
     b.vel.y = -b.vel.y;
     // 한동안 벽돌을 못 깨고 패들과 벽 사이만 오가면 각도를 살짝 바꿔 준다
-    if (b.idle > NUDGE_AFTER_PADDLE) this.nudge(b);
+    if (b.idle > NUDGE_AFTER_PADDLE) nudge(b);
   }
 
   private collideBricks(b: Ball): void {
@@ -441,7 +455,7 @@ export class Game {
     if (!k) return;
 
     const r = k.rect;
-    this.bounceOff(b, r);
+    bounceOff(b, r);
     b.idle = 0;
 
     k.alive = false;
@@ -579,6 +593,7 @@ export class Game {
     this.best_ = Math.max(this.best_, this.score_);
     this.balls = [];
     this.items = [];
+    this.swipe = null;
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');

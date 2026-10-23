@@ -144,7 +144,85 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
 }
 
 // ---------- 게임 영역 (논리 좌표) ----------
-function drawPlaying(ctx: Ctx, game: Game): void {
+// 엘프 모드 벽돌 색: 화면에서 숫자가 클수록 초록 → 노랑 → 빨강
+function hpColor(hp: number, maxHp: number): string {
+  const t = maxHp <= 1 ? 0 : Math.min(1, (hp - 1) / (maxHp - 1));
+  return `hsl(${Math.round(135 - t * 135)}, 62%, 56%)`;
+}
+
+function drawSwipe(ctx: Ctx, game: Game, v: View): void {
+  const s = game.swipe!;
+  const floor = game.paddle.y + game.paddle.h;
+
+  // 바닥선: 벽돌이 여기 닿으면 끝
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillRect(0, floor, World.Width, 1.5);
+
+  const p = game.player;
+  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
+
+  const maxHp = s.bricks.reduce((m, k) => Math.max(m, k.hp), 1);
+  for (const k of s.bricks) {
+    const r = s.drawRect(k.col, k.row);
+    roundRect(ctx, r, 6);
+    ctx.fillStyle = hpColor(k.hp, maxHp);
+    ctx.fill();
+    text(ctx, String(k.hp), r.centerX, r.centerY + 1, k.hp >= 100 ? 15 : 18, '#1e2232', { bold: true });
+  }
+
+  // +1: 초록 고리. 살짝 숨쉬듯
+  const pulse = 1 + 0.08 * Math.sin(v.time * 5);
+  for (const pk of s.pickups) {
+    const r = s.drawRect(pk.col, pk.row);
+    ctx.beginPath();
+    ctx.arc(r.centerX, r.centerY, 13 * pulse, 0, Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#4ddc7a';
+    ctx.stroke();
+    text(ctx, '+1', r.centerX, r.centerY + 1, 12, '#4ddc7a', { bold: true });
+  }
+
+  for (const b of s.balls) outlinedRect(ctx, b.bounds(), WHITE);
+
+  // 조준선: 점선으로 두 번째로 부딪치는 곳까지
+  const dir = s.aimDir();
+  if (dir) {
+    const pts = s.previewPath(dir);
+    ctx.save();
+    ctx.setLineDash([2, 9]);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    ctx.restore();
+    const end = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fill();
+  }
+
+  // 쏠 자리에 공과 남은 수
+  if (s.phase !== 'shoot' || s.toLaunch > 0) {
+    const lp = s.launchPos;
+    outlinedRect(ctx, new Rect(lp.x - 5, lp.y - 5, 10, 10), WHITE);
+    const n = s.phase === 'shoot' ? s.toLaunch : s.ballCount;
+    const tx = Math.max(22, Math.min(World.Width - 22, lp.x));   // 화면 끝에서도 글자가 잘리지 않게
+    text(ctx, `×${n}`, tx, lp.y - 17, 15, WHITE, { bold: true });
+  }
+
+  if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
+    const my = World.Height * 0.55;
+    text(ctx, '화면을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });
+    text(ctx, '손을 떼면 발사!', World.Width / 2, my + 32, 16, '#dcdce6');
+  }
+}
+
+function drawPlaying(ctx: Ctx, game: Game, v: View): void {
+  if (game.swipe) { drawSwipe(ctx, game, v); return; }
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 
@@ -248,7 +326,8 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   text(ctx, Characters.List[game.selected].ability, World.Width / 2, 322, 16, ITEM_COLOR, { bold: true });
 
   if (game.lastResult === 'gameover') {
-    text(ctx, `게임 오버  ·  스테이지 ${game.stage}  ·  점수 ${game.score}`, World.Width / 2, 350, 17, '#f06e6e', { bold: true });
+    const unit = Characters.List[game.player.character].mode === 'swipe' ? '라운드' : '스테이지';
+    text(ctx, `게임 오버  ·  ${unit} ${game.stage}  ·  점수 ${game.score}`, World.Width / 2, 350, 17, '#f06e6e', { bold: true });
   }
   text(ctx, `최고 점수 ${game.bestScore}`, World.Width / 2, 376, 15, GRAY);
 
@@ -259,8 +338,9 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   button(ctx, big, '시작하기', true, 24);
   if (v.rankingVisible) button(ctx, UI.ranking, '랭킹 보기', false, 17);
 
-  text(ctx, '화면 아래쪽을 좌우로 밀어 패들을 움직여요', World.Width / 2, 566, 15, GRAY);
-  text(ctx, '벽돌을 깨면 아이템이 떨어져요. 패들로 받으세요', World.Width / 2, 592, 15, GRAY);
+  const hints = Characters.List[game.selected].hints;
+  text(ctx, hints[0], World.Width / 2, 566, 15, GRAY);
+  text(ctx, hints[1], World.Width / 2, 592, 15, GRAY);
   ctx.restore();
 }
 
@@ -357,8 +437,10 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     ctx.rect(x, l.hudTop, Math.max(0, maxW), HUD_H);
     ctx.clip();
     text(ctx, `${game.score}`, x, y - 8, 20, WHITE, { bold: true, align: 'left' });
+    const sw = game.swipe;
     const extra = Characters.List[game.player.character].revives > 0 ? `   부활 ${game.revivesLeft}` : '';
-    text(ctx, `STAGE ${game.stage}${extra}`, x, y + 12, 12, ITEM_COLOR, { bold: true, align: 'left' });
+    const label = sw ? `ROUND ${sw.round}   공 ${sw.ballCount}` : `STAGE ${game.stage}${extra}`;
+    text(ctx, label, x, y + 12, 12, ITEM_COLOR, { bold: true, align: 'left' });
     ctx.restore();
   }
 }
@@ -381,7 +463,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   ctx.beginPath();
   ctx.rect(0, 0, World.Width, World.Height);
   ctx.clip();
-  if (game.state === 'playing') drawPlaying(ctx, game);
+  if (game.state === 'playing') drawPlaying(ctx, game, v);
   else drawMenu(ctx, game, v);
   drawOverlay(ctx, v.overlay);
   ctx.restore();
@@ -400,7 +482,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    text(ctx, '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
+    text(ctx, game.swipe ? '누른 채 아래로 당겨 조준, 놓으면 발사' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
   }
 

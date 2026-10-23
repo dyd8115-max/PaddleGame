@@ -11,11 +11,20 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 // 플레이 중 캐릭터를 메뉴 카드 그림보다 크게
 export const PLAYER_SCALE = 1.5;
 
+// 캐릭터마다 게임 방식이 다르다
+// classic: 패들로 공을 받아 벽돌 깨기 (꼬마: 가두리 맵, 성녀: 회색 벽 없이 빠른 공)
+// swipe: 직접 조준해서 쏘는 스와이프 벽돌깨기 (엘프)
+export type GameMode = 'classic' | 'swipe';
+export type MapKind = 'cage' | 'plain';
+
 export interface CharacterDef {
   name: string;
   fps: number;        // 걷기 애니메이션 속도
-  ability: string;    // 메뉴에 보이는 능력 설명
-  startBalls: number; // 스테이지를 시작할 때 공 수
+  mode: GameMode;
+  map: MapKind;       // classic 모드의 벽돌 배치 종류
+  ability: string;    // 메뉴에 보이는 한 줄 설명
+  hints: [string, string];   // 메뉴 아래 안내 두 줄
+  speedMul: number;   // 공 빠르기 배율
   skill: boolean;     // 버튼을 누르면 공 2배 (스테이지마다 한 번)
   paddleW: number;    // 패들 길이
   revives: number;    // 공을 모두 놓쳐도 다시 시작할 수 있는 횟수
@@ -26,9 +35,21 @@ export const Characters = {
   CellW: 67,     // 그리기 크기 (논리 좌표). 그림 파일은 2배 크기
   CellH: 80,
   List: [
-    { name: 'KID', fps: 15, ability: '버튼을 누르면 공이 2배 (스테이지마다 한 번)', startBalls: 1, skill: true, paddleW: 80, revives: 0 },
-    { name: 'ELF', fps: 13, ability: '공 3개로 출발해요', startBalls: 3, skill: false, paddleW: 80, revives: 0 },
-    { name: 'SAINT', fps: 16, ability: '공을 다 놓쳐도 한 번 부활해요', startBalls: 1, skill: false, paddleW: 80, revives: 1 },
+    {
+      name: 'KID', fps: 15, mode: 'classic', map: 'cage', speedMul: 1, skill: true, paddleW: 80, revives: 0,
+      ability: '가두리 맵 · 공×2 버튼 (스테이지마다 한 번)',
+      hints: ['회색 우리 안으로 공을 넣으면 한꺼번에 와르르', '벽돌을 깨면 아이템이 떨어져요. 패들로 받으세요'],
+    },
+    {
+      name: 'ELF', fps: 13, mode: 'swipe', map: 'plain', speedMul: 1, skill: false, paddleW: 80, revives: 0,
+      ability: '직접 조준해서 쏘는 스와이프 벽돌깨기',
+      hints: ['화면을 누른 채 아래로 당겨 조준하고, 놓으면 발사', '숫자만큼 맞히면 깨져요. 벽돌이 바닥에 닿으면 끝'],
+    },
+    {
+      name: 'SAINT', fps: 16, mode: 'classic', map: 'plain', speedMul: 1.5, skill: false, paddleW: 80, revives: 1,
+      ability: '아주 빠른 공 · 다 놓쳐도 한 번 부활',
+      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '회색 벽은 없지만 공이 1.5배 빨라요'],
+    },
   ] as CharacterDef[],
 
   // 시작 메뉴의 캐릭터 카드 위치 (논리 좌표)
@@ -41,9 +62,9 @@ export const Characters = {
 
 export const BackgroundCount = 6;
 
-// 공 종류: 하양은 기본, 빨강은 2배 빠르고, 초록은 0.5배 느리다 (스테이지 빠르기에 곱함)
+// 공 종류: 하양은 기본, 빨강은 1.5배 빠르고, 초록은 0.5배 느리다 (스테이지 빠르기에 곱함)
 export type BallKind = 'white' | 'red' | 'green';
-export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 2, green: 0.5 };
+export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 1.5, green: 0.5 };
 
 export class Ball {
   size = 10;
