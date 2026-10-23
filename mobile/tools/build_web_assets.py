@@ -2,7 +2,7 @@
 #
 # 결과 (public/assets/)
 #   characters.png  세 캐릭터 걷기 16프레임, 오른쪽 보기만 (왼쪽은 그릴 때 뒤집음)
-#                   한 칸 = 논리 크기(67x80)의 2배. 행 = 캐릭터 번호
+#                   한 칸 = 논리 크기(67x80)의 3배. 행 = 캐릭터 번호
 #   devil.png       악마 128x128 칸, 행 = 동작 (0 걷기 8장, 1~3 점프 6/5/5장), 오른쪽 보기만
 #   bg0.jpg ~ bg5.jpg  배경 6종. 세로 1600px, 위쪽(벽돌 구역)을 조금 더 어둡게
 #   bgm.wav         배경음악. MP3 는 앞뒤에 빈 구간이 생겨 반복할 때 끊기므로 WAV 그대로 쓴다
@@ -21,7 +21,7 @@ FRAMES = 16
 SRC = 480
 CHARS = ["kid", "elf", "saint"]       # game/objects.ts 의 캐릭터 순서와 같아야 함
 LOGICAL_TALLEST = 80                  # 가장 큰 캐릭터의 논리 높이 (PC 버전과 같음)
-SCALE = 2                             # 휴대폰 고해상도 화면용 배율
+SCALE = 3                             # 휴대폰 고해상도 화면용 배율 (플레이 중 1.5배로 크게 그려도 또렷하게)
 BACKGROUNDS = ["desert_temple", "sky_towers", "forest_ruins", "snow_forest", "crystal_cave", "mushroom_forest"]
 BG_H = 1600
 SOUNDS = ["start", "clear", "over", "brick", "stomp"]

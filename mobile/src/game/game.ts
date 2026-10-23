@@ -67,9 +67,7 @@ export class Game {
   private events_: GameEvent[] = [];
 
   constructor() {
-    // 캐릭터는 바닥에 서고, 패들은 캐릭터 머리 위
-    this.player.y = World.Height - this.player.h - 6;
-    this.paddle.y = this.player.y - this.paddle.h - 6;
+    this.placeBottom();
     this.paddle.x = (World.Width - this.paddle.w) * 0.5;
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
     this.pickBackground();
@@ -104,6 +102,20 @@ export class Game {
     const out = this.events_;
     this.events_ = [];
     return out;
+  }
+
+  // 화면 비율이 바뀌어 세계 높이가 달라질 때 (캐릭터와 패들을 바닥으로)
+  setWorldHeight(h: number): void {
+    if (Math.abs(h - World.Height) < 0.5) return;
+    World.Height = h;
+    this.placeBottom();
+    if (this.devil.active) this.updateDevil(0);
+  }
+
+  private placeBottom(): void {
+    // 캐릭터는 바닥에 서고, 패들은 캐릭터 머리 위
+    this.player.y = World.Height - this.player.h - 6;
+    this.paddle.y = this.player.y - this.paddle.h - 6;
   }
 
   // ---------- 입력 ----------

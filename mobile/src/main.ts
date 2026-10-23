@@ -2,7 +2,7 @@
 import { Audio, type SoundName } from './audio';
 import { loadImages } from './assets';
 import { Game, type GameEvent } from './game/game';
-import { Characters } from './game/objects';
+import { Characters, menuTop } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
   closeApp, getInsets, leaderboardAvailable, loadValue, onAppState, onBack, onInsetsChange,
@@ -51,6 +51,7 @@ function resize(): void {
     right: Math.max(0, rawInsets.right - (window.innerWidth - rect.right)),
   };
   layout = makeLayout(w, h, dpr, insets);
+  game.setWorldHeight(layout.worldH);
 }
 window.addEventListener('resize', resize);
 if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(canvas);
@@ -133,7 +134,8 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 function onTap(x: number, y: number): void {
-  const w = toWorld(layout, x, y);
+  const p = toWorld(layout, x, y);
+  const w = { x: p.x, y: p.y - menuTop() };   // 메뉴와 안내 창은 가운데 640 상자 기준
   if (overlay === 'pause') {
     if (UI.resume.contains(w.x, w.y)) overlay = 'none';
     else if (UI.quit.contains(w.x, w.y)) quit();
@@ -221,7 +223,8 @@ function frame(now: number): void {
 
 // 개발 서버에서만: 브라우저 자동 확인용으로 게임 상태를 노출
 if (import.meta.env.DEV) {
-  const w = window as unknown as { __game: Game; __layout: () => Layout; __audio: Audio };
+  const w = window as unknown as { __game: Game; __layout: () => Layout; __audio: Audio; __menuTop: () => number };
+  w.__menuTop = menuTop;
   w.__game = game;
   w.__audio = audio;
   w.__layout = () => layout;
