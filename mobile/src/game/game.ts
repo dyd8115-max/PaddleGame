@@ -7,7 +7,7 @@ export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
 export type GameEvent = 'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'devilStomp' | 'revive';
 
-const BALL_SPEED = 360;     // 1스테이지 공 빠르기 (픽셀/초)
+const BALL_SPEED = 540;     // 1스테이지 공 빠르기 (픽셀/초)
 const SPEED_STEP = 1.3;     // 스테이지마다 1.3배씩 빨라짐
 const SPEED_MAX = 4;        // 하얀 공 기준 최대 4배
 const SPEED_ABS_MAX = 2400; // 빨간 공이라도 이보다 빠르면 화면에서 보이지 않음 (픽셀/초)
