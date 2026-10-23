@@ -1,13 +1,16 @@
 # 블록 브레이커 (모바일 버전)
 
 캐릭터를 골라 패들로 벽돌을 깨는 세로형 모바일 게임입니다.
-저장소 루트의 PC 버전과 같은 게임 규칙을 TypeScript와 캔버스로 옮기고, 앱인토스 SDK로 토스 미니앱에 올립니다.
+저장소 루트의 PC 버전에서 출발해 TypeScript와 캔버스로 옮기고, 캐릭터마다 다른 게임 방식을 더했습니다. 앱인토스 SDK로 토스 미니앱에 올립니다.
 
 <p>
-  <img src="store/screenshot1_636x1048.png" width="200" alt="캐릭터 선택 화면">
-  <img src="store/screenshot2_636x1048.png" width="200" alt="1스테이지">
-  <img src="store/screenshot3_636x1048.png" width="200" alt="2스테이지 악마">
+  <img src="store/screenshot1_636x1048.png" width="200" alt="꼬마: 가두리 맵">
+  <img src="store/screenshot2_636x1048.png" width="200" alt="엘프: 스와이프 벽돌깨기">
+  <img src="store/screenshot3_636x1048.png" width="200" alt="성녀: 내려오는 벽돌 버티기">
 </p>
+
+왼쪽부터 꼬마(가두리 맵), 엘프(스와이프 벽돌깨기), 성녀(버티기)입니다.
+안드로이드 APK 와 인터넷 없이 열리는 HTML 파일은 저장소의 [Releases](https://github.com/dyd8115-max/PaddleGame/releases) 에서 받을 수 있습니다.
 
 ## 실행하기
 
