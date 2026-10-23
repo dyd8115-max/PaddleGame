@@ -26,6 +26,7 @@ export interface View {
   overlay: Overlay;
   muted: boolean;
   rankingVisible: boolean;
+  elfSaveRound: number;  // 엘프 중간 저장 라운드 (없으면 0)
   time: number;          // 화면 연출용 시계 (초)
 }
 
@@ -146,7 +147,7 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
 
 // 기록 글자: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 시간
 function formatRecord(mode: GameMode, v: number): string {
-  if (mode === 'swipe') return `${v}발`;
+  if (mode === 'swipe') return `ROUND ${v}`;
   if (mode === 'survival') {
     if (v < 60) return `${v.toFixed(1)}초`;
     return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
@@ -232,7 +233,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
   if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
     const my = World.Height * 0.55;
     text(ctx, '위쪽을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });
-    text(ctx, '손을 떼면 발사! 아래쪽을 밀면 자리 이동', World.Width / 2, my + 32, 16, '#dcdce6');
+    text(ctx, '손을 떼면 발사! 흰 선 아래를 밀면 자리 이동', World.Width / 2, my + 32, 16, '#dcdce6');
   }
 }
 
@@ -367,7 +368,9 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   const pulse = 1 + 0.03 * Math.sin(v.time * 4);
   const s = UI.start;
   const big = new Rect(s.centerX - s.w * pulse / 2, s.centerY - s.h * pulse / 2, s.w * pulse, s.h * pulse);
-  button(ctx, big, '시작하기', true, 24);
+  const resume = selMode === 'swipe' && v.elfSaveRound > 0;
+  button(ctx, big, resume ? `이어하기 (R${v.elfSaveRound})` : '시작하기', true, resume ? 20 : 24);
+  if (resume) button(ctx, UI.newGame, '처음부터', false, 15);
   if (v.rankingVisible) button(ctx, UI.ranking, '랭킹 보기', false, 17);
 
   const hints = Characters.List[game.selected].hints;
@@ -450,7 +453,7 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const mode = game.mode;
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
-    const sub = sw ? `ROUND ${sw.round} · 공 ${sw.ballCount}개` : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
+    const sub = sw ? `공 ${sw.ballCount}개` : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, l.hudTop, Math.max(0, maxW), HUD_H);
@@ -498,7 +501,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    text(ctx, game.swipe ? '◀   여기를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
+    text(ctx, game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
   }
 

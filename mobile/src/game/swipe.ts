@@ -1,8 +1,8 @@
 // 엘프 모드: 직접 조준해서 쏘는 스와이프 벽돌깨기
 //
 // - 아래쪽을 밀면 엘프가 걸어가 쏠 자리를 고르고, 위쪽을 누른 채 아래로 당기면 반대쪽으로 조준선이 보인다
-// - 손을 떼면 가진 공을 차례로 쏜다. 기록은 지금까지 쏜 공 수
-// - 벽돌의 숫자만큼 맞혀야 깨진다. 초록 동그라미(+1)를 지나가면 다음 차례부터 공이 하나 늘어난다
+// - 손을 떼면 가진 공을 차례로 쏜다. 기록은 도달한 라운드. 조준 단계마다 중간 저장
+// - 벽돌의 숫자만큼 맞혀야 깨진다. 초록 동그라미(+1, 두 줄에 하나)를 지나가면 다음 차례부터 공이 하나 늘어난다
 // - 공이 모두 바닥에 돌아오면 새 벽돌 줄이 1~3줄(50%, 30%, 20%) 생기면서 한꺼번에 내려온다. 바닥선에 닿으면 끝
 // - 공 빠르기는 라운드와 상관없이 일정하다 (한 차례가 오래 걸리면 빨라지기만 함)
 import { Rect, Vec2 } from './geometry';
@@ -48,12 +48,22 @@ export class Pickup {
   constructor(public col: number, public row: number) {}
 }
 
+// 중간 저장: 조준 단계의 판 상태
+export interface SwipeSave {
+  round: number;
+  ballCount: number;
+  launchX: number;
+  rowCount: number;
+  bricks: [number, number, number][];   // 칸, 줄, 숫자
+  pickups: [number, number][];          // 칸, 줄
+}
+
 export class Swipe {
   phase: SwipePhase = 'aim';
   round = 1;
   ballCount = 1;            // 가진 공 수
   launchX = World.Width / 2; // 쏠 자리 (공 가운데 x). 조준 단계에서 엘프가 걸어가 정한다
-  shots = 0;                 // 지금까지 쏜 공 수 (기록)
+  rowCount = 0;              // 지금까지 만든 줄 수 (+1 은 두 줄에 하나)
   newRows = 1;               // 이번에 새로 생긴 줄 수 (내려오는 그림용)
   bricks: SwipeBrick[] = [];
   pickups: Pickup[] = [];
@@ -70,8 +80,25 @@ export class Swipe {
   private turnTime = 0;
   private fast = false;
 
-  constructor(private host: SwipeHost) {
-    this.spawnRow(0);
+  constructor(private host: SwipeHost, save?: SwipeSave) {
+    if (save) {
+      this.round = save.round;
+      this.ballCount = save.ballCount;
+      this.launchX = save.launchX;
+      this.rowCount = save.rowCount;
+      this.bricks = save.bricks.map(([c, r, hp]) => new SwipeBrick(c, r, hp));
+      this.pickups = save.pickups.map(([c, r]) => new Pickup(c, r));
+    } else {
+      this.spawnRow(0);
+    }
+  }
+
+  save(): SwipeSave {
+    return {
+      round: this.round, ballCount: this.ballCount, launchX: Math.round(this.launchX), rowCount: this.rowCount,
+      bricks: this.bricks.map((k) => [k.col, k.row, k.hp] as [number, number, number]),
+      pickups: this.pickups.map((p) => [p.col, p.row] as [number, number]),
+    };
   }
 
   // ---------- 위치 ----------
@@ -176,7 +203,6 @@ export class Swipe {
     this.collected = 0;
     this.turnTime = 0;
     this.fast = false;
-    this.shots += this.ballCount;
   }
 
   update(dt: number): void {
@@ -284,6 +310,8 @@ export class Swipe {
       const hp = n >= 5 && Math.random() < 0.2 ? n * 2 : n;
       this.bricks.push(new SwipeBrick(cols[i], row, hp));
     }
-    this.pickups.push(new Pickup(cols[count], row));
+    // +1 은 두 줄에 하나만
+    if (this.rowCount % 2 === 0) this.pickups.push(new Pickup(cols[count], row));
+    this.rowCount++;
   }
 }

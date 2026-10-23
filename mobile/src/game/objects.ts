@@ -12,8 +12,8 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 export const PLAYER_SCALE = 1.5;
 
 // 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
-// stage:    패들로 받아 가두리 맵을 깨고 다음 맵으로. 몇 스테이지까지 갔나 (꼬마)
-// swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 공을 몇 발 쐈나 (엘프)
+// stage:    패들로 받아 벽돌을 깨고 다음 맵으로. 회색 블록이 무작위로 생김. 몇 스테이지까지 갔나 (꼬마)
+// swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (엘프)
 // survival: 3초마다 벽돌 줄이 위에서 생겨 내려온다. 몇 초 버텼나 (성녀)
 export type GameMode = 'stage' | 'swipe' | 'survival';
 
@@ -34,13 +34,13 @@ export const Characters = {
   List: [
     {
       name: 'KID', fps: 15, mode: 'stage', speedMul: 1, paddleW: 80,
-      ability: '가두리 맵 · 몇 스테이지까지 갈까',
-      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '회색 우리 안으로 공을 넣으면 한꺼번에 와르르'],
+      ability: '회색 블록 피하기 · 몇 스테이지까지 갈까',
+      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '스테이지마다 깨지지 않는 회색 블록이 최대 7개'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,
-      ability: '스와이프 벽돌깨기 · 공을 몇 발 쏠까',
-      hints: ['아래쪽을 밀어 자리를 고르고, 위를 당겨 조준', '숫자만큼 맞히면 깨져요. 바닥선에 닿으면 끝'],
+      ability: '스와이프 벽돌깨기 · 몇 라운드까지 갈까',
+      hints: ['흰 선 아래를 밀어 자리 고르고, 위를 당겨 조준', '숫자만큼 맞히면 깨져요. 바닥선에 닿으면 끝'],
     },
     {
       name: 'SAINT', fps: 16, mode: 'survival', speedMul: 1.5, paddleW: 80,

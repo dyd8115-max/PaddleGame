@@ -1,9 +1,9 @@
 // 게임 로직 전체. 화면, 입력, 소리에 의존하지 않는다.
-// 캐릭터마다 방식이 다르다: 꼬마 stage(가두리 맵), 엘프 swipe(swipe.ts), 성녀 survival(내려오는 벽돌 버티기)
+// 캐릭터마다 방식이 다르다: 꼬마 stage(무작위 회색 블록), 엘프 swipe(swipe.ts), 성녀 survival(내려오는 벽돌 버티기)
 // 플랫폼 쪽은 입력 전달, update(dt) 호출, 상태를 읽어 그리기, takeEvents() 로 소리 처리만 한다.
 import { Rect, Vec2 } from './geometry';
 import { bounceOff, nudge } from './collide';
-import { Swipe } from './swipe';
+import { Swipe, type SwipeSave } from './swipe';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -63,15 +63,15 @@ const NUDGE_AFTER_PADDLE = 5;   // 패들에 맞을 때: 이 시간(초) 동안 
 const NUDGE_AFTER_WALL = 10;    // 패들에 안 오고 벽 사이에 갇혔을 때
 
 // 스테이지별 배치: '#' 벽돌, '*' 노란 벽돌(아이템이 꼭 떨어짐), '=' 회색 벽(안 깨짐), '.' 빈칸
-// 꼬마: 가두리 맵. 회색 우리 안에 벽돌을 빽빽하게 넣고 입구만 열어 둔다. 공이 들어가면 안에서 마구 튕기며 와르르 깨진다
-const CAGE_LAYOUTS: string[][] = [
-  // 큰 우리 하나, 양쪽 아래에 문 두 개. 문 위 빈 줄에서 공이 마구 튄다
-  ['=########=', '=##*##*##=', '=########=', '=#*####*#=', '=........=', '=..====..='],
-  // 우리 두 개, 입구도 두 개
-  ['=###==###=', '=#*#==#*#=', '=###==###=', '=#*#==#*#=', '=...==...=', '=..====..='],
-  // 큰 우리 + 아래에 벽돌 한 줄
-  ['=########=', '=#*####*#=', '=########=', '=........=', '===....===', '..........', '.##.**.##.'],
+// 꼬마: 벽돌 배치 5가지를 차례로. 스테이지마다 벽돌 중 1~7개가 무작위로 회색 블록(안 깨짐)이 된다
+const KID_LAYOUTS: string[][] = [
+  ['########', '##*##*##', '########', '#.####.#', '###**###'],
+  ['...##...', '..#**#..', '.######.', '##*##*##', '########'],
+  ['#.#.#.#.', '.#.#*#.#', '#.#.#.#.', '.#*#.#.#', '#.#.#.#.', '.#.#.#*#'],
+  ['.##..##.', '########', '##*##*##', '.######.', '..####..', '...**...'],
+  ['########', '........', '#*####*#', '........', '########', '#**##**#'],
 ];
+const GREY_MAX = 7;
 
 const BRICK_TOP = 60;
 const BRICK_MARGIN = 20;
@@ -123,9 +123,9 @@ export class Game {
   get lastRecord(): number { return this.lastRecord_; }
   get survivalTime(): number { return this.survivalTime_; }
   get dangerY(): number { return this.paddle.y - DANGER_ABOVE_PADDLE; }
-  // 지금 판의 기록: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 초
+  // 지금 판의 기록: 꼬마는 스테이지, 엘프는 라운드, 성녀는 버틴 초
   get record(): number {
-    if (this.mode === 'swipe') return this.swipe ? this.swipe.shots : this.lastRecord_;
+    if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
     if (this.mode === 'survival') return Math.floor(this.survivalTime_ * 10) / 10;
     return this.stage_;
   }
@@ -202,7 +202,8 @@ export class Game {
     return false;
   }
 
-  startGame(): void {
+  // save: 엘프 모드 중간 저장에서 이어 하기
+  startGame(save?: SwipeSave): void {
     if (this.state_ !== 'menu') return;
     this.score_ = 0;
     this.stage_ = 1;
@@ -217,7 +218,7 @@ export class Game {
 
     this.pickBackground();   // 게임마다 배경을 무작위로
     this.swipe = null;
-    if (ch.mode === 'swipe') this.startSwipe();
+    if (ch.mode === 'swipe') this.startSwipe(save);
     else if (ch.mode === 'survival') this.startSurvival();
     else this.startStage(true);
     this.state_ = 'playing';
@@ -225,7 +226,7 @@ export class Game {
   }
 
   // 엘프 모드: 패들과 악마 없이, 바닥에서 직접 조준해서 쏜다
-  private startSwipe(): void {
+  private startSwipe(save?: SwipeSave): void {
     this.balls = [];
     this.items = [];
     this.bricks = [];
@@ -241,7 +242,10 @@ export class Game {
       pickup: () => this.events_.push('pickup'),
       rowsAdded: () => this.events_.push('rowAdd'),
       gameOver: () => this.endGame('gameover'),
-    });
+    }, save);
+    this.paddle.targetX = this.swipe.launchX;
+    this.updatePaddle();
+    this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
   }
 
   // 성녀 모드: 회색 벽 없이, 몇 줄 깔고 시작. 3초마다 위에서 새 줄
@@ -444,7 +448,7 @@ export class Game {
 
   private resetBricks(): void {
     this.bricks = [];
-    const layout = CAGE_LAYOUTS[(this.stage_ - 1) % CAGE_LAYOUTS.length];
+    const layout = KID_LAYOUTS[(this.stage_ - 1) % KID_LAYOUTS.length];
     const cols = layout[0].length;
     const w = (World.Width - BRICK_MARGIN * 2 - BRICK_GAP * (cols - 1)) / cols;
     const cell = (r: number, c: number) =>
@@ -457,6 +461,13 @@ export class Game {
       }
     });
     this.walls = buildWalls(layout, cell);
+    // 스테이지마다 벽돌 중 1~7개를 무작위로 골라 회색 블록(안 깨짐)으로
+    const n = Math.min(this.bricks.length - 1, 1 + randInt(GREY_MAX));
+    for (let i = 0; i < n; i++) {
+      const j = randInt(this.bricks.length);
+      this.walls.push(this.bricks[j].rect);
+      this.bricks.splice(j, 1);
+    }
   }
 
   private updatePaddle(): void {

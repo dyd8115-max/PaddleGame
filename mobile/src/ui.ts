@@ -4,6 +4,7 @@ import { Rect } from './game/geometry';
 export const UI = {
   start: new Rect(130, 398, 220, 60),
   ranking: new Rect(150, 474, 180, 44),
+  newGame: new Rect(150, 520, 180, 34),   // 엘프 중간 저장이 있을 때만: 처음부터 새로 하기
   resume: new Rect(130, 300, 220, 56),
   quit: new Rect(130, 372, 220, 56),
   exitCancel: new Rect(90, 350, 140, 52),

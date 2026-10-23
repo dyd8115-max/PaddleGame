@@ -2,6 +2,7 @@
 import { Audio, type SoundName } from './audio';
 import { loadImages } from './assets';
 import { Game, type GameEvent } from './game/game';
+import type { SwipeSave } from './game/swipe';
 import { Characters, menuTop } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
@@ -23,14 +24,31 @@ let overlay: Overlay = 'none';
 let clock = 0;
 
 // ---------- 저장 ----------
-const KEY_BEST = (ch: number) => `best${ch}`;   // 캐릭터별 최고 기록
+const KEY_BEST = (ch: number) => (ch === 1 ? 'best1r' : `best${ch}`);   // 캐릭터별 최고 기록 (엘프는 라운드)
+const KEY_ELF_SAVE = 'elfSave';   // 엘프 모드 중간 저장
+let elfSave: SwipeSave | null = null;
+let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
+
+function readElfSave(raw: string | null): SwipeSave | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as SwipeSave;
+    return Array.isArray(v.bricks) && typeof v.round === 'number' ? v : null;
+  } catch { return null; }
+}
+
+function clearElfSave(): void {
+  elfSave = null;
+  void saveValue(KEY_ELF_SAVE, '');
+}
 const KEY_MUTED = 'muted';
 const KEY_CHAR = 'character';
 
 async function loadSaved(): Promise<void> {
-  const [muted, ch, ...bests] = await Promise.all([
-    loadValue(KEY_MUTED), loadValue(KEY_CHAR), ...Characters.List.map((_, i) => loadValue(KEY_BEST(i))),
+  const [muted, ch, save, ...bests] = await Promise.all([
+    loadValue(KEY_MUTED), loadValue(KEY_CHAR), loadValue(KEY_ELF_SAVE), ...Characters.List.map((_, i) => loadValue(KEY_BEST(i))),
   ]);
+  elfSave = readElfSave(save);
   bests.forEach((v, i) => game.setBestRecord(i, Number(v) || 0));
   audio.setMuted(muted === '1');
   const c = Number(ch);
@@ -64,9 +82,13 @@ const lx = (e: { clientX: number }) => e.clientX - rect.left;
 const ly = (e: { clientY: number }) => e.clientY - rect.top;
 
 // ---------- 동작 ----------
-function start(): void {
+// 엘프는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
+function start(fresh = false): void {
   if (game.state !== 'menu') return;
-  game.startGame();
+  const isElf = Characters.List[game.selected].mode === 'swipe';
+  if (isElf && fresh) clearElfSave();
+  game.startGame(isElf && elfSave ? elfSave : undefined);
+  savedRound = game.swipe ? game.swipe.round : 0;
   void saveValue(KEY_CHAR, String(game.selected));
 }
 
@@ -135,7 +157,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (swipeActive()) {
     // 엘프: 아래 조작 공간은 걸어서 자리 옮기기, 그 위는 당겨서 조준
     const p = toWorld(layout, lx(e), ly(e));
-    elfWalking = ly(e) >= layout.touch.y;
+    elfWalking = p.y >= game.paddle.y + game.paddle.h;   // 흰 바닥선 아래는 걷기, 위는 조준
     if (elfWalking) game.setPaddleTarget(p.x);
     else game.swipe!.aimBegin(p.x, p.y);
     return;
@@ -177,6 +199,7 @@ function onTap(x: number, y: number): void {
   if (game.state === 'menu') {
     if (game.tapCard(w.x, w.y)) return;
     if (UI.start.contains(w.x, w.y)) start();
+    else if (elfSave && Characters.List[game.selected].mode === 'swipe' && UI.newGame.contains(w.x, w.y)) start(true);
     else if (leaderboardAvailable() && UI.ranking.contains(w.x, w.y)) void openLeaderboard();
   }
 }
@@ -247,13 +270,25 @@ function frame(now: number): void {
     if (name === 'brick' && clock - lastBrickSound < 0.04) continue;
     if (name === 'brick') lastBrickSound = clock;
     audio.play(name);
-    if (e === 'gameOver') finishGame();
+    if (e === 'gameOver') {
+      if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움
+      finishGame();
+    }
+  }
+
+  // 엘프: 새 라운드 조준 단계가 될 때마다 중간 저장
+  const sw = game.swipe;
+  if (sw && sw.phase === 'aim' && sw.round !== savedRound) {
+    savedRound = sw.round;
+    elfSave = sw.save();
+    void saveValue(KEY_ELF_SAVE, JSON.stringify(elfSave));
   }
 
   render(ctx, layout, game, {
     overlay,
     muted: audio.muted,
     rankingVisible: leaderboardAvailable(),
+    elfSaveRound: elfSave ? elfSave.round : 0,
     time: clock,
   });
   requestAnimationFrame(frame);
