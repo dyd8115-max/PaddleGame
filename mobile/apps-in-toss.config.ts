@@ -2,7 +2,7 @@ import { defineConfig } from '@apps-in-toss/web-framework/config';
 
 export default defineConfig({
   // 콘솔에 등록한 appName 과 똑같아야 해요 (한 번 등록하면 못 바꿔요)
-  appName: 'block-breaker',
+  appName: 'yonginu2022',
   brand: {
     primaryColor: '#E6A700',
   },

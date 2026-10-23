@@ -1,15 +1,18 @@
 // 게임 로직 전체 (PC 버전 Game.cpp 와 같은 규칙). 화면, 입력, 소리에 의존하지 않는다.
 // 플랫폼 쪽은 입력 전달, update(dt) 호출, 상태를 읽어 그리기, takeEvents() 로 소리 처리만 한다.
 import { Rect, Vec2 } from './geometry';
-import { BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, Paddle, Player, World } from './objects';
+import { BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, Paddle, Player, World, type BallKind } from './objects';
 
 export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
 export type GameEvent = 'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'devilStomp' | 'revive';
 
 const BALL_SPEED = 360;     // 1스테이지 공 빠르기 (픽셀/초)
-const SPEED_STEP = 1.5;     // 스테이지마다 1.5배씩 빨라짐
-const SPEED_MAX = 4;        // 최대 4배 (이보다 빠르면 화면에서 공을 거의 볼 수 없음)
+const SPEED_STEP = 1.3;     // 스테이지마다 1.3배씩 빨라짐
+const SPEED_MAX = 4;        // 하얀 공 기준 최대 4배
+const SPEED_ABS_MAX = 2400; // 빨간 공이라도 이보다 빠르면 화면에서 보이지 않음 (픽셀/초)
+// 벽돌에서 새로 생기는 공의 색 확률 (처음 출발하는 공과 부활 공은 항상 하양)
+const KIND_CHANCE: [BallKind, number][] = [['white', 0.4], ['red', 0.3], ['green', 0.3]];
 const DROP_CHANCE = 0.05;   // 일반 벽돌을 깰 때 공이 하나 더 나올 기본 확률 (노란 벽돌은 항상)
 const MAX_BALLS = 12;       // 화면에 동시에 있을 수 있는 공 수
 const SERVE_TIME = 1.4;     // 스테이지 시작 전 공이 기다리는 시간
@@ -67,9 +70,7 @@ export class Game {
   private events_: GameEvent[] = [];
 
   constructor() {
-    // 캐릭터는 바닥에 서고, 패들은 캐릭터 머리 위
-    this.player.y = World.Height - this.player.h - 6;
-    this.paddle.y = this.player.y - this.paddle.h - 6;
+    this.placeBottom();
     this.paddle.x = (World.Width - this.paddle.w) * 0.5;
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
     this.pickBackground();
@@ -104,6 +105,20 @@ export class Game {
     const out = this.events_;
     this.events_ = [];
     return out;
+  }
+
+  // 화면 비율이 바뀌어 세계 높이가 달라질 때 (캐릭터와 패들을 바닥으로)
+  setWorldHeight(h: number): void {
+    if (Math.abs(h - World.Height) < 0.5) return;
+    World.Height = h;
+    this.placeBottom();
+    if (this.devil.active) this.updateDevil(0);
+  }
+
+  private placeBottom(): void {
+    // 캐릭터는 바닥에 서고, 패들은 캐릭터 머리 위
+    this.player.y = World.Height - this.player.h - 6;
+    this.paddle.y = this.player.y - this.paddle.h - 6;
   }
 
   // ---------- 입력 ----------
@@ -237,8 +252,9 @@ export class Game {
     this.background_ = next;
   }
 
-  private ballSpeed(): number {
-    return BALL_SPEED * Math.min(SPEED_MAX, Math.pow(SPEED_STEP, this.stage_ - 1));
+  private ballSpeed(kind: BallKind = 'white'): number {
+    const white = BALL_SPEED * Math.min(SPEED_MAX, Math.pow(SPEED_STEP, this.stage_ - 1));
+    return Math.min(SPEED_ABS_MAX, white * BALL_SPEED_MUL[kind]);
   }
 
   private resetBricks(): void {
@@ -278,13 +294,23 @@ export class Game {
     else if (was) p.animTime = 0;
   }
 
-  private makeBall(center: Vec2): Ball {
+  private randomKind(): BallKind {
+    let r = Math.random();
+    for (const [k, p] of KIND_CHANCE) {
+      if (r < p) return k;
+      r -= p;
+    }
+    return 'white';
+  }
+
+  private makeBall(center: Vec2, kind: BallKind = 'white'): Ball {
     // 위쪽 30°~150° 범위의 임의 방향
     const a = (30 + Math.random() * 120) * Math.PI / 180;
     const b = new Ball();
     b.size = BALL_SIZE;
     b.pos = new Vec2(center.x - b.size * 0.5, center.y - b.size * 0.5);
-    b.vel = new Vec2(Math.cos(a), -Math.sin(a)).scale(this.ballSpeed());   // 화면 좌표는 y 가 아래로 증가
+    b.kind = kind;
+    b.vel = new Vec2(Math.cos(a), -Math.sin(a)).scale(this.ballSpeed(kind));   // 화면 좌표는 y 가 아래로 증가
     return b;
   }
 
@@ -352,7 +378,7 @@ export class Game {
     const chance = DROP_CHANCE * Characters.List[this.player.character].dropMul;
     const drop = k.item || Math.random() < chance;
     if (drop && this.balls.length + this.pendingBalls_.length < MAX_BALLS) {
-      this.pendingBalls_.push(this.makeBall(new Vec2(r.centerX, r.centerY)));
+      this.pendingBalls_.push(this.makeBall(new Vec2(r.centerX, r.centerY), this.randomKind()));
     }
   }
 

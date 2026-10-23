@@ -2,7 +2,7 @@
 import { images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
-import { Characters, DevilSprite, World } from './game/objects';
+import { Characters, DevilSprite, World, menuTop } from './game/objects';
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
 import { UI, type Overlay } from './ui';
 
@@ -11,7 +11,7 @@ const FONT = '"Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic 
 const ROW_COLORS = ['#e65050', '#f0963c', '#50c878', '#50a0f0', '#aa6ee6'];
 const ITEM_COLOR = '#ffe65a';
 const PADDLE_COLOR = '#dcdce6';
-const BALL_COLOR = '#ffffff';
+const BALL_COLOR: Record<string, string> = { white: '#ffffff', red: '#ff4d4d', green: '#4ddc7a' };
 const CARD = '#242838';
 const CARD_SEL = '#465078';
 const WHITE = '#ffffff';
@@ -159,24 +159,27 @@ function drawPlaying(ctx: Ctx, game: Game): void {
   const pad = game.paddle.bounds();
   pad.y += game.stompDip();
   outlinedRect(ctx, pad, PADDLE_COLOR);
-  for (const b of game.balls) outlinedRect(ctx, b.bounds(), BALL_COLOR);
+  for (const b of game.balls) outlinedRect(ctx, b.bounds(), BALL_COLOR[b.kind]);
   drawDevil(ctx, game);   // 공과 패들보다 나중에 그려서 공을 가림
 
+  const my = World.Height * 0.5;   // 안내 문구는 세계 높이의 가운데쯤
   if (game.reviving) {
-    text(ctx, '부활!', World.Width / 2, 330, 34, '#fff3b0', { bold: true });
-    text(ctx, '성녀의 힘으로 한 번 더 도전해요', World.Width / 2, 380, 16, '#dcdce6');
+    text(ctx, '부활!', World.Width / 2, my, 34, '#fff3b0', { bold: true });
+    text(ctx, '성녀의 힘으로 한 번 더 도전해요', World.Width / 2, my + 50, 16, '#dcdce6');
   } else if (game.serving) {
-    text(ctx, `STAGE ${game.stage}`, World.Width / 2, 330, 34, ITEM_COLOR, { bold: true });
+    text(ctx, `STAGE ${game.stage}`, World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
     const sub = game.stage === 1 ? '준비!'
       : game.stage === 2 ? '악마가 패들 위에 올라탔어요! 공을 잘 보세요'
       : '클리어! 공이 더 빨라져요';
-    text(ctx, sub, World.Width / 2, 380, 16, '#dcdce6');
+    text(ctx, sub, World.Width / 2, my + 50, 16, '#dcdce6');
   }
 }
 
 function drawMenu(ctx: Ctx, game: Game, v: View): void {
   ctx.fillStyle = 'rgba(10,12,20,0.45)';
   ctx.fillRect(0, 0, World.Width, World.Height);
+  ctx.save();
+  ctx.translate(0, menuTop());   // 메뉴 내용은 640 높이 상자로 가운데에
 
   text(ctx, '블록 브레이커', World.Width / 2, 60, 38, WHITE, { bold: true });
   text(ctx, '캐릭터를 고르세요', World.Width / 2, 112, 16, GRAY);
@@ -216,12 +219,15 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
 
   text(ctx, '화면 아래쪽을 좌우로 밀어 패들을 움직여요', World.Width / 2, 566, 15, GRAY);
   text(ctx, '노란 벽돌을 깨면 공이 하나 더 생겨요', World.Width / 2, 592, 15, GRAY);
+  ctx.restore();
 }
 
 function drawOverlay(ctx: Ctx, overlay: Overlay): void {
   if (overlay === 'none') return;
   ctx.fillStyle = 'rgba(8,10,16,0.72)';
   ctx.fillRect(0, 0, World.Width, World.Height);
+  ctx.save();
+  ctx.translate(0, menuTop());
   if (overlay === 'pause') {
     text(ctx, '일시정지', World.Width / 2, 230, 30, WHITE, { bold: true });
     button(ctx, UI.resume, '계속하기', true, 22);
@@ -231,6 +237,7 @@ function drawOverlay(ctx: Ctx, overlay: Overlay): void {
     button(ctx, UI.exitCancel, '취소', false, 20);
     button(ctx, UI.exitOk, '종료', true, 20);
   }
+  ctx.restore();
 }
 
 // ---------- 화면 테두리 정보 (CSS 픽셀) ----------

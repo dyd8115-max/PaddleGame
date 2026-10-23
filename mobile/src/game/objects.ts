@@ -1,8 +1,15 @@
 // 게임 오브젝트 (PC 버전 GameObjects.h 와 같음)
 import { Rect, Vec2 } from './geometry';
 
-// 논리 좌표계 크기. 실제 화면 크기와 무관하게 게임은 이 좌표로만 계산한다
-export const World = { Width: 480, Height: 640 } as const;
+// 논리 좌표계 크기. 가로는 480 고정, 세로는 휴대폰 화면 비율에 맞춰 640~960 사이로 늘어난다
+export const World = { Width: 480, Height: 640 };
+
+// 메뉴와 안내 창은 높이 640 상자 안에 그리고, 세로로 가운데 둔다
+export const MENU_H = 640;
+export const menuTop = (): number => (World.Height - MENU_H) / 2;
+
+// 플레이 중 캐릭터를 메뉴 카드 그림보다 크게
+export const PLAYER_SCALE = 1.5;
 
 export interface CharacterDef {
   name: string;
@@ -33,8 +40,13 @@ export const Characters = {
 
 export const BackgroundCount = 6;
 
+// 공 종류: 하양은 기본, 빨강은 2배 빠르고, 초록은 0.5배 느리다 (스테이지 빠르기에 곱함)
+export type BallKind = 'white' | 'red' | 'green';
+export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 2, green: 0.5 };
+
 export class Ball {
   size = 10;
+  kind: BallKind = 'white';
   constructor(public pos = new Vec2(), public vel = new Vec2()) {}
   bounds(): Rect { return new Rect(this.pos.x, this.pos.y, this.size, this.size); }
 }
@@ -52,8 +64,8 @@ export class Paddle {
 export class Player {
   x = 0;
   y = 0;
-  w = Characters.CellW;
-  h = Characters.CellH;
+  w = Characters.CellW * PLAYER_SCALE;
+  h = Characters.CellH * PLAYER_SCALE;
   character = 0;
   facingLeft = false;
   walking = false;
