@@ -103,18 +103,19 @@ function drawDevil(ctx: Ctx, game: Game): void {
   const img = images.devil;
   if (!img) {
     ctx.fillStyle = '#781e28';
-    ctx.fillRect(b.x + 36, b.y + 40 + dip, 46, 88);
+    ctx.fillRect(b.x + 36 * d.scale, b.y + 40 * d.scale + dip, 46 * d.scale, 88 * d.scale);
     return;
   }
   const c = DevilSprite.Cell;
+  const dc = c * d.scale;   // 그리는 크기 (엘프 모드는 2배)
   ctx.save();
   ctx.imageSmoothingEnabled = false;   // 도트 그림은 또렷하게
   if (d.facingLeft) {
-    ctx.translate(b.x + c, b.y + dip);
+    ctx.translate(b.x + dc, b.y + dip);
     ctx.scale(-1, 1);
-    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, 0, 0, c, c);
+    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, 0, 0, dc, dc);
   } else {
-    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, b.x, b.y + dip, c, c);
+    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, b.x, b.y + dip, dc, dc);
   }
   ctx.restore();
 }
@@ -193,6 +194,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
   }
 
   for (const b of s.balls) outlinedRect(ctx, b.bounds(), WHITE);
+  drawDevil(ctx, game);   // 벽돌 위에 그려서 가림
 
   // 조준선: 점선으로 두 번째로 부딪치는 곳까지
   const dir = s.aimDir();
@@ -224,6 +226,9 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
     text(ctx, `×${n}`, tx, lp.y - 17, 15, WHITE, { bold: true });
   }
 
+  if (s.round === 2 && s.phase === 'aim' && !s.aiming && game.devil.active) {
+    text(ctx, '악마가 나타나 벽돌을 가려요!', World.Width / 2, World.Height * 0.55, 20, '#ff9a9a', { bold: true });
+  }
   if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
     const my = World.Height * 0.55;
     text(ctx, '위쪽을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });

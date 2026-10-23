@@ -126,6 +126,9 @@ export class Devil {
   stompTimer = 0;     // 착지 직후 패들이 눌리는 연출 남은 시간
   x = 0;              // 그리기용 칸 좌상단 (매 프레임 계산)
   y = 0;
+  bodyX = 240;        // 엘프 모드: 몸통 가운데 x (패들 대신 화면 위쪽을 걸어다님)
+  baseY = 0;          // 엘프 모드: 발 높이 (벽돌 맨 아랫줄을 따라 오르내림)
+  scale = 1;          // 그리기 배율 (엘프 모드에서는 크게 그려서 벽돌을 더 가림)
 
   bounds(): Rect { return new Rect(this.x, this.y, DevilSprite.Cell, DevilSprite.Cell); }
 
