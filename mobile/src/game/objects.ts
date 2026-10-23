@@ -40,8 +40,13 @@ export const Characters = {
 
 export const BackgroundCount = 6;
 
+// 공 종류: 하양은 기본, 빨강은 2배 빠르고, 초록은 0.5배 느리다 (스테이지 빠르기에 곱함)
+export type BallKind = 'white' | 'red' | 'green';
+export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 2, green: 0.5 };
+
 export class Ball {
   size = 10;
+  kind: BallKind = 'white';
   constructor(public pos = new Vec2(), public vel = new Vec2()) {}
   bounds(): Rect { return new Rect(this.pos.x, this.pos.y, this.size, this.size); }
 }

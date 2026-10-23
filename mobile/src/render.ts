@@ -11,7 +11,7 @@ const FONT = '"Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic 
 const ROW_COLORS = ['#e65050', '#f0963c', '#50c878', '#50a0f0', '#aa6ee6'];
 const ITEM_COLOR = '#ffe65a';
 const PADDLE_COLOR = '#dcdce6';
-const BALL_COLOR = '#ffffff';
+const BALL_COLOR: Record<string, string> = { white: '#ffffff', red: '#ff4d4d', green: '#4ddc7a' };
 const CARD = '#242838';
 const CARD_SEL = '#465078';
 const WHITE = '#ffffff';
@@ -159,7 +159,7 @@ function drawPlaying(ctx: Ctx, game: Game): void {
   const pad = game.paddle.bounds();
   pad.y += game.stompDip();
   outlinedRect(ctx, pad, PADDLE_COLOR);
-  for (const b of game.balls) outlinedRect(ctx, b.bounds(), BALL_COLOR);
+  for (const b of game.balls) outlinedRect(ctx, b.bounds(), BALL_COLOR[b.kind]);
   drawDevil(ctx, game);   // 공과 패들보다 나중에 그려서 공을 가림
 
   const my = World.Height * 0.5;   // 안내 문구는 세계 높이의 가운데쯤
