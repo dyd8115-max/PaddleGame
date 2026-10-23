@@ -1,5 +1,9 @@
-// 앱인토스 SDK 연결부. 일반 브라우저(개발 중)에서는 SDK 호출이 실패하므로 브라우저 기능으로 대신한다.
+// 실행 환경 연결부
+// - 토스 앱: 앱인토스 SDK
+// - 안드로이드 앱(Capacitor): 뒤로가기, 앱 전환, 종료
+// - 일반 브라우저: 브라우저 기능으로 대신
 import { Game, SafeArea, Screen, Storage, getOperationalEnvironment, graniteEvent } from '@apps-in-toss/web-framework';
+import { Capacitor } from '@capacitor/core';
 
 export interface Insets { top: number; bottom: number; left: number; right: number; }
 
@@ -12,6 +16,11 @@ try {
   inToss = false;
 }
 export const isInToss = (): boolean => inToss;
+
+// 안드로이드 앱으로 감싸서 실행 중인지
+let native = false;
+try { native = Capacitor.isNativePlatform(); } catch { native = false; }
+const capApp = () => import('@capacitor/app').then((m) => m.App);
 
 // 너무 오래 걸리는 SDK 호출은 실패로 본다
 function withTimeout<T>(p: Promise<T>, ms = 1500): Promise<T> {
@@ -75,15 +84,24 @@ export function onInsetsChange(cb: (v: Insets) => void): void {
 // ---------- 뒤로가기 ----------
 // 안드로이드 뒤로가기를 게임이 직접 처리한다 (플레이 중이면 일시정지 등)
 export function onBack(cb: () => void): void {
-  if (!inToss) return;
-  try {
-    graniteEvent.addEventListener('backEvent', { onEvent: cb });
-  } catch { /* 무시 */ }
+  if (inToss) {
+    try { graniteEvent.addEventListener('backEvent', { onEvent: cb }); } catch { /* 무시 */ }
+  } else if (native) {
+    void capApp().then((App) => App.addListener('backButton', cb)).catch(() => undefined);
+  }
 }
 
 export async function closeApp(): Promise<void> {
-  if (!inToss) return;
-  try { await Screen.close(); } catch { /* 무시 */ }
+  try {
+    if (inToss) await Screen.close();
+    else if (native) await (await capApp()).exitApp();
+  } catch { /* 무시 */ }
+}
+
+// 안드로이드 앱: 홈 버튼 등으로 앱이 가려지거나 돌아올 때
+export function onAppState(cb: (active: boolean) => void): void {
+  if (!native) return;
+  void capApp().then((App) => App.addListener('appStateChange', (s) => cb(s.isActive))).catch(() => undefined);
 }
 
 // ---------- 게임센터 리더보드 ----------

@@ -1,4 +1,5 @@
 // 그림 불러오기. 다 불러오기 전에는 그 그림만 빼고 그린다
+import { assetUrl } from './assetUrl';
 import { BackgroundCount } from './game/objects';
 
 export interface Images {
@@ -19,7 +20,7 @@ function load(url: string): Promise<HTMLImageElement | null> {
     img.decoding = 'async';
     img.onload = () => resolve(img);
     img.onerror = () => resolve(null);
-    img.src = url;
+    img.src = assetUrl(url);
   });
 }
 

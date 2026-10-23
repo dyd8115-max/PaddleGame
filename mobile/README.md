@@ -30,6 +30,25 @@ npm run build
 `block-breaker.ait` 가 만들어집니다. 앱인토스 콘솔에 올리고, QR로 토스 앱에서 테스트합니다.
 `apps-in-toss.config.ts` 의 `appName` 은 콘솔에 등록한 이름과 같아야 합니다.
 
+## 다른 형태로 만들기
+
+**오프라인 HTML 한 파일**: 그림과 소리를 모두 넣은 파일 하나. 받아서 크롬으로 열면 인터넷 없이 실행됩니다.
+
+```
+npm run build
+python tools/make_offline_html.py dist 블록브레이커_오프라인.html
+```
+
+**안드로이드 앱(APK)**: `android/` 폴더가 Capacitor 로 만든 안드로이드 프로젝트입니다.
+
+```
+npm run build
+npx cap sync android     # 웹 빌드를 android/ 로 복사
+npx cap open android     # Android Studio 로 열기 → Build > Build APK(s)
+```
+
+앱 아이콘과 시작 화면은 `python tools/make_android_res.py store android/app/src/main/res` 로 다시 만듭니다.
+
 ## 그림과 소리 다시 만들기
 
 PC 버전의 원본 그림과 소리(저장소 루트의 `assets/`, `resources/`)를 웹용으로 바꿉니다. 파이썬과 `Pillow`, `numpy`, `ffmpeg`가 필요합니다.
@@ -82,5 +101,9 @@ tools/
   store_shots.py       콘솔용 세로 스크린샷 찍기
   store_art.py         콘솔용 로고, 썸네일, 공유 이미지 만들기
   make_web_preview.py  빌드 결과를 미리보기 페이지 하나로 묶기
+  make_offline_html.py 인터넷 없이 열리는 HTML 한 파일 만들기
+  make_android_res.py  안드로이드 앱 아이콘과 시작 화면 만들기
+android/       안드로이드 앱 프로젝트 (Capacitor)
 apps-in-toss.config.ts 앱인토스 설정
+capacitor.config.ts    안드로이드 앱 설정
 ```
