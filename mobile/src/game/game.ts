@@ -30,14 +30,24 @@ const STOMP_TIME = 0.18;
 const STOMP_DEPTH = 5;
 const BALL_SIZE = 10;
 const MAX_DT = 1 / 30;
+const WALL_FADE = 0.25;     // 회색 벽이 나타나는 시간
 
-// 스테이지별 벽돌 배치: '#' 일반, '*' 아이템(공 추가), '.' 빈칸
+// 공이 오랫동안 벽돌을 못 깨면 같은 길만 도는 것으로 보고 각도를 살짝 바꾼다
+const NUDGE_AFTER_PADDLE = 5;   // 패들에 맞을 때: 이 시간(초) 동안 못 깼으면
+const NUDGE_AFTER_WALL = 10;    // 패들에 안 오고 벽 사이에 갇혔을 때
+const NUDGE_MIN = 8 * Math.PI / 180;
+const NUDGE_MAX = 20 * Math.PI / 180;
+const MIN_ANGLE = 30 * Math.PI / 180;   // 공이 수평에 가까워지지 않게 (출발 각도와 같은 기준)
+
+// 스테이지별 배치: '#' 벽돌, '*' 공 나오는 벽돌, '=' 회색 벽(안 깨짐), '.' 빈칸
+// 칸막이 → 지그재그 → 요새 순서로 점점 복잡해지고, 4스테이지부터 같은 순서로 반복한다
 const LAYOUTS: string[][] = [
-  ['########', '##*##*##', '########', '#.####.#', '###**###'],
-  ['...##...', '..#**#..', '.######.', '##*##*##', '########'],
-  ['#.#.#.#.', '.#.#*#.#', '#.#.#.#.', '.#*#.#.#', '#.#.#.#.', '.#.#.#*#'],
-  ['.##..##.', '########', '##*##*##', '.######.', '..####..', '...**...'],
-  ['########', '........', '#*####*#', '........', '########', '#**##**#'],
+  // 칸막이: 세로 벽이 칸을 나눠서 칸마다 공을 넣어야 한다
+  ['##=##=##', '##=##=##', '#*=##=*#', '##=**=##', '##=##=##', '..=..=..'],
+  // 지그재그: 아래 벽은 오른쪽, 위 벽은 왼쪽이 열려 있고, 두 벽 사이 통로에도 벽돌이 있다
+  ['########', '#*####*#', '########', '........', '....====', '........', '.#.**.#.', '........', '====....'],
+  // 요새: 아래와 옆이 막혀 있어서, 옆 통로로 공을 올려 보내 위에서 떨어뜨려야 한다
+  ['#.####.#', '#=####=#', '.=#**#=.', '.=####=.', '#======#'],
 ];
 
 const BRICK_TOP = 60;
@@ -67,6 +77,7 @@ export class Game {
   balls: Ball[] = [];
   private pendingBalls_: Ball[] = [];   // 순회 중 추가되는 공 (아이템)
   bricks: Brick[] = [];
+  walls: Rect[] = [];   // 회색 벽 (깨지지 않음)
   private events_: GameEvent[] = [];
 
   constructor() {
@@ -93,6 +104,8 @@ export class Game {
     const t = (this.introTime_ - k.appearAt) / POP_TIME;
     return Math.max(0, Math.min(1, t));
   }
+
+  wallReveal(): number { return Math.min(1, this.introTime_ / WALL_FADE); }
 
   stompDip(): number {
     const d = this.devil;
@@ -262,14 +275,16 @@ export class Game {
     const layout = LAYOUTS[(this.stage_ - 1) % LAYOUTS.length];
     const cols = layout[0].length;
     const w = (World.Width - BRICK_MARGIN * 2 - BRICK_GAP * (cols - 1)) / cols;
+    const cell = (r: number, c: number) =>
+      new Rect(BRICK_MARGIN + c * (w + BRICK_GAP), BRICK_TOP + r * (BRICK_HEIGHT + BRICK_GAP), w, BRICK_HEIGHT);
     layout.forEach((line, r) => {
       for (let c = 0; c < cols; c++) {
         const ch = line[c];
-        if (ch === '.') continue;
-        const rect = new Rect(BRICK_MARGIN + c * (w + BRICK_GAP), BRICK_TOP + r * (BRICK_HEIGHT + BRICK_GAP), w, BRICK_HEIGHT);
-        this.bricks.push(new Brick(rect, r, ch === '*', Math.random() * FILL_TIME));
+        if (ch !== '#' && ch !== '*') continue;
+        this.bricks.push(new Brick(cell(r, c), r, ch === '*', Math.random() * FILL_TIME));
       }
     });
+    this.walls = buildWalls(layout, cell);
   }
 
   private updatePaddle(): void {
@@ -315,6 +330,7 @@ export class Game {
   }
 
   private moveBall(b: Ball, dt: number): void {
+    b.idle += dt;
     // 한 프레임 이동 거리를 공 크기의 절반 이하로 쪼개서 관통 방지
     const dist = b.vel.length() * dt;
     const steps = Math.max(1, Math.ceil(dist / (b.size * 0.5)));
@@ -323,9 +339,49 @@ export class Game {
       b.pos = b.pos.add(b.vel.scale(sdt));
       this.collideWalls(b);
       this.collidePaddle(b);
+      this.collideSolids(b);
       this.collideBricks(b);
       if (b.pos.y > World.Height) break;
     }
+  }
+
+  // 공을 사각형 밖으로 밀어내고, 부딪친 면 쪽으로 튕긴다 (입사각 = 반사각)
+  private bounceOff(b: Ball, r: Rect): void {
+    const br = b.bounds();
+    const overlapX = Math.min(br.right, r.right) - Math.max(br.left, r.left);
+    const overlapY = Math.min(br.bottom, r.bottom) - Math.max(br.top, r.top);
+    // 겹친 폭이 작은 축이 실제로 부딪친 면
+    if (overlapX < overlapY) {
+      const fromLeft = br.centerX < r.centerX;
+      b.vel.x = fromLeft ? -Math.abs(b.vel.x) : Math.abs(b.vel.x);
+      b.pos.x += fromLeft ? -overlapX - 0.01 : overlapX + 0.01;
+    } else {
+      const fromTop = br.centerY < r.centerY;
+      b.vel.y = fromTop ? -Math.abs(b.vel.y) : Math.abs(b.vel.y);
+      b.pos.y += fromTop ? -overlapY - 0.01 : overlapY + 0.01;
+    }
+  }
+
+  // 회색 벽: 튕기기만 하고 깨지지 않는다. 벽 사이에 오래 갇혀 있으면 각도를 살짝 바꾼다
+  private collideSolids(b: Ball): void {
+    for (const r of this.walls) {
+      if (!r.intersects(b.bounds())) continue;
+      this.bounceOff(b, r);
+      if (b.idle > NUDGE_AFTER_WALL) this.nudge(b);
+    }
+  }
+
+  // 같은 길만 계속 도는 공의 방향을 8~20° 돌린다. 너무 눕지 않게 30°~150° 안에서
+  private nudge(b: Ball): void {
+    b.idle = 0;
+    const speed = b.vel.length();
+    const ySign = b.vel.y < 0 ? -1 : 1;
+    const a0 = Math.atan2(Math.abs(b.vel.y), b.vel.x);   // 수평에서 잰 각 (0~180°)
+    const d = (NUDGE_MIN + Math.random() * (NUDGE_MAX - NUDGE_MIN)) * (Math.random() < 0.5 ? -1 : 1);
+    let a = a0 + d;
+    if (a < MIN_ANGLE || a > Math.PI - MIN_ANGLE) a = a0 - d;
+    a = Math.max(MIN_ANGLE, Math.min(Math.PI - MIN_ANGLE, a));
+    b.vel = new Vec2(Math.cos(a) * speed, ySign * Math.sin(a) * speed);
   }
 
   private collideWalls(b: Ball): void {
@@ -350,6 +406,8 @@ export class Game {
     // 입사각 = 반사각: y 성분만 반전
     b.pos.y = this.paddle.y - b.size;
     b.vel.y = -b.vel.y;
+    // 한동안 벽돌을 못 깨고 패들과 벽 사이만 오가면 각도를 살짝 바꿔 준다
+    if (b.idle > NUDGE_AFTER_PADDLE) this.nudge(b);
   }
 
   private collideBricks(b: Ball): void {
@@ -358,17 +416,8 @@ export class Game {
     if (!k) return;
 
     const r = k.rect;
-    const overlapX = Math.min(br.right, r.right) - Math.max(br.left, r.left);
-    const overlapY = Math.min(br.bottom, r.bottom) - Math.max(br.top, r.top);
-
-    // 겹친 폭이 작은 축이 실제로 부딪친 면: 그 축 성분만 반전
-    if (overlapX < overlapY) {
-      b.vel.x = -b.vel.x;
-      b.pos.x += br.centerX < r.centerX ? -overlapX : overlapX;
-    } else {
-      b.vel.y = -b.vel.y;
-      b.pos.y += br.centerY < r.centerY ? -overlapY : overlapY;
-    }
+    this.bounceOff(b, r);
+    b.idle = 0;
 
     k.alive = false;
     this.score_ += 10;
@@ -452,4 +501,46 @@ export class Game {
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');
   }
+}
+
+// 배치 글자에서 회색 벽('=') 사각형 만들기.
+// 이어진 칸은 하나로 합쳐서 칸 사이 틈(4px)이 없게 한다. 이음매에서 공이 엉뚱한 방향으로 튀지 않게.
+// 맨 왼쪽·오른쪽 칸의 벽은 화면 끝까지 늘려서 가장자리로 공이 빠져나가지 못하게 한다.
+function buildWalls(layout: string[], cell: (r: number, c: number) => Rect): Rect[] {
+  const isWall = (r: number, c: number) => layout[r]?.[c] === '=';
+  const rows = layout.length;
+  const cols = layout[0].length;
+  const used = new Set<string>();
+  const walls: Rect[] = [];
+  const leftOf = (r: number, c: number) => (c === 0 ? 0 : cell(r, c).left);
+  const rightOf = (r: number, c: number) => (c === cols - 1 ? World.Width : cell(r, c).right);
+
+  // 세로로 두 칸 이상 이어지면 기둥 하나로
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      if (!isWall(r, c) || isWall(r - 1, c)) continue;
+      let e = r;
+      while (isWall(e + 1, c)) e++;
+      if (e === r) continue;
+      const top = cell(r, c);
+      walls.push(new Rect(leftOf(r, c), top.y, rightOf(r, c) - leftOf(r, c), cell(e, c).bottom - top.y));
+      for (let i = r; i <= e; i++) used.add(`${i},${c}`);
+    }
+  }
+
+  // 나머지는 가로로 이어진 칸끼리 하나로. 옆에 기둥이 붙어 있으면 그 사이 틈까지 덮는다
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (!isWall(r, c) || used.has(`${r},${c}`)) continue;
+      let e = c;
+      while (isWall(r, e + 1) && !used.has(`${r},${e + 1}`)) e++;
+      let left = leftOf(r, c);
+      let right = rightOf(r, e);
+      if (isWall(r, c - 1)) left = cell(r, c - 1).right;
+      if (isWall(r, e + 1)) right = cell(r, e + 1).left;
+      walls.push(new Rect(left, cell(r, c).top, right - left, cell(r, c).h));
+      c = e;
+    }
+  }
+  return walls;
 }

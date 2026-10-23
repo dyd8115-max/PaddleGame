@@ -47,6 +47,7 @@ export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 2, gree
 export class Ball {
   size = 10;
   kind: BallKind = 'white';
+  idle = 0;   // 마지막으로 벽돌을 깬 뒤 지난 시간 (같은 길만 도는지 확인용)
   constructor(public pos = new Vec2(), public vel = new Vec2()) {}
   bounds(): Rect { return new Rect(this.pos.x, this.pos.y, this.size, this.size); }
 }

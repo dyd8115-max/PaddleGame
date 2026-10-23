@@ -12,6 +12,9 @@ const ROW_COLORS = ['#e65050', '#f0963c', '#50c878', '#50a0f0', '#aa6ee6'];
 const ITEM_COLOR = '#ffe65a';
 const PADDLE_COLOR = '#dcdce6';
 const BALL_COLOR: Record<string, string> = { white: '#ffffff', red: '#ff4d4d', green: '#4ddc7a' };
+const WALL_COLOR = '#7c8190';       // 회색 벽 (안 깨짐)
+const WALL_LIGHT = '#a9aebb';
+const WALL_DARK = '#3c404c';
 const CARD = '#242838';
 const CARD_SEL = '#465078';
 const WHITE = '#ffffff';
@@ -143,6 +146,8 @@ function drawPlaying(ctx: Ctx, game: Game): void {
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 
+  drawWalls(ctx, game);
+
   for (const k of game.bricks) {
     if (!k.alive) continue;
     const r = game.brickReveal(k);
@@ -173,6 +178,24 @@ function drawPlaying(ctx: Ctx, game: Game): void {
       : '클리어! 공이 더 빨라져요';
     text(ctx, sub, World.Width / 2, my + 50, 16, '#dcdce6');
   }
+}
+
+// 회색 벽: 테두리와 위쪽 밝은 줄로 돌처럼. 스테이지 시작 때 짧게 나타난다
+function drawWalls(ctx: Ctx, game: Game): void {
+  const a = game.wallReveal();
+  if (a <= 0 || game.walls.length === 0) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  for (const r of game.walls) {
+    ctx.fillStyle = WALL_DARK;
+    ctx.fillRect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3);
+    ctx.fillStyle = WALL_COLOR;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = WALL_LIGHT;
+    ctx.fillRect(r.x, r.y, r.w, 3);
+    ctx.fillRect(r.x, r.y, 3, r.h);
+  }
+  ctx.restore();
 }
 
 function drawMenu(ctx: Ctx, game: Game, v: View): void {
