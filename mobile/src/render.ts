@@ -2,7 +2,7 @@
 import { images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
-import { Characters, DevilSprite, World, menuTop } from './game/objects';
+import { Characters, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
 import { UI, type Overlay } from './ui';
 
@@ -12,6 +12,11 @@ const ROW_COLORS = ['#e65050', '#f0963c', '#50c878', '#50a0f0', '#aa6ee6'];
 const ITEM_COLOR = '#ffe65a';
 const PADDLE_COLOR = '#dcdce6';
 const BALL_COLOR: Record<string, string> = { white: '#ffffff', red: '#ff4d4d', green: '#4ddc7a' };
+const ITEM_GOOD = '#3b82f6';        // 좋은 아이템 (공 늘리기, 패들 길게)
+const ITEM_BAD = '#b23b3b';         // 나쁜 아이템 (공 줄이기, 패들 짧게)
+const WALL_COLOR = '#7c8190';       // 회색 벽 (안 깨짐)
+const WALL_LIGHT = '#a9aebb';
+const WALL_DARK = '#3c404c';
 const CARD = '#242838';
 const CARD_SEL = '#465078';
 const WHITE = '#ffffff';
@@ -98,18 +103,19 @@ function drawDevil(ctx: Ctx, game: Game): void {
   const img = images.devil;
   if (!img) {
     ctx.fillStyle = '#781e28';
-    ctx.fillRect(b.x + 36, b.y + 40 + dip, 46, 88);
+    ctx.fillRect(b.x + 36 * d.scale, b.y + 40 * d.scale + dip, 46 * d.scale, 88 * d.scale);
     return;
   }
   const c = DevilSprite.Cell;
+  const dc = c * d.scale;   // 그리는 크기 (엘프 모드는 2배)
   ctx.save();
   ctx.imageSmoothingEnabled = false;   // 도트 그림은 또렷하게
   if (d.facingLeft) {
-    ctx.translate(b.x + c, b.y + dip);
+    ctx.translate(b.x + dc, b.y + dip);
     ctx.scale(-1, 1);
-    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, 0, 0, c, c);
+    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, 0, 0, dc, dc);
   } else {
-    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, b.x, b.y + dip, c, c);
+    ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, b.x, b.y + dip, dc, dc);
   }
   ctx.restore();
 }
@@ -138,11 +144,119 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
   }
 }
 
+// 기록 글자: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 시간
+function formatRecord(mode: GameMode, v: number): string {
+  if (mode === 'swipe') return `${v}발`;
+  if (mode === 'survival') {
+    if (v < 60) return `${v.toFixed(1)}초`;
+    return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
+  }
+  return `STAGE ${v}`;
+}
+
 // ---------- 게임 영역 (논리 좌표) ----------
-function drawPlaying(ctx: Ctx, game: Game): void {
+// 엘프 모드 벽돌 색: 화면에서 숫자가 클수록 초록 → 노랑 → 빨강
+function hpColor(hp: number, maxHp: number): string {
+  const t = maxHp <= 1 ? 0 : Math.min(1, (hp - 1) / (maxHp - 1));
+  return `hsl(${Math.round(135 - t * 135)}, 62%, 56%)`;
+}
+
+function drawSwipe(ctx: Ctx, game: Game, v: View): void {
+  const s = game.swipe!;
+  const floor = game.paddle.y + game.paddle.h;
+
+  // 바닥선: 벽돌이 여기 닿으면 끝
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillRect(0, floor, World.Width, 1.5);
+
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 
+  const maxHp = s.bricks.reduce((m, k) => Math.max(m, k.hp), 1);
+  for (const k of s.bricks) {
+    const r = s.drawRect(k.col, k.row);
+    roundRect(ctx, r, 6);
+    ctx.fillStyle = hpColor(k.hp, maxHp);
+    ctx.fill();
+    text(ctx, String(k.hp), r.centerX, r.centerY + 1, k.hp >= 100 ? 15 : 18, '#1e2232', { bold: true });
+  }
+
+  // +1: 초록 고리. 살짝 숨쉬듯
+  const pulse = 1 + 0.08 * Math.sin(v.time * 5);
+  for (const pk of s.pickups) {
+    const r = s.drawRect(pk.col, pk.row);
+    ctx.beginPath();
+    ctx.arc(r.centerX, r.centerY, 13 * pulse, 0, Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#4ddc7a';
+    ctx.stroke();
+    text(ctx, '+1', r.centerX, r.centerY + 1, 12, '#4ddc7a', { bold: true });
+  }
+
+  for (const b of s.balls) outlinedRect(ctx, b.bounds(), WHITE);
+  drawDevil(ctx, game);   // 벽돌 위에 그려서 가림
+
+  // 조준선: 점선으로 두 번째로 부딪치는 곳까지
+  const dir = s.aimDir();
+  if (dir) {
+    const pts = s.previewPath(dir);
+    ctx.save();
+    ctx.setLineDash([2, 9]);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    ctx.restore();
+    const end = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fill();
+  }
+
+  // 쏠 자리에 공과 남은 수
+  if (s.phase !== 'shoot' || s.toLaunch > 0) {
+    const lp = s.launchPos;
+    outlinedRect(ctx, new Rect(lp.x - 5, lp.y - 5, 10, 10), WHITE);
+    const n = s.phase === 'shoot' ? s.toLaunch : s.ballCount;
+    const tx = Math.max(22, Math.min(World.Width - 22, lp.x));   // 화면 끝에서도 글자가 잘리지 않게
+    text(ctx, `×${n}`, tx, lp.y - 17, 15, WHITE, { bold: true });
+  }
+
+  if (s.round === 2 && s.phase === 'aim' && !s.aiming && game.devil.active) {
+    text(ctx, '악마가 나타나 벽돌을 가려요!', World.Width / 2, World.Height * 0.55, 20, '#ff9a9a', { bold: true });
+  }
+  if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
+    const my = World.Height * 0.55;
+    text(ctx, '위쪽을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });
+    text(ctx, '손을 떼면 발사! 아래쪽을 밀면 자리 이동', World.Width / 2, my + 32, 16, '#dcdce6');
+  }
+}
+
+function drawPlaying(ctx: Ctx, game: Game, v: View): void {
+  if (game.swipe) { drawSwipe(ctx, game, v); return; }
+  const p = game.player;
+  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
+
+  drawWalls(ctx, game);
+
+  // 성녀: 벽돌이 닿으면 끝나는 선
+  if (game.mode === 'survival') {
+    ctx.save();
+    ctx.setLineDash([10, 8]);
+    ctx.strokeStyle = 'rgba(255,90,90,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, game.dangerY);
+    ctx.lineTo(World.Width, game.dangerY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  const shift = game.brickShift();   // 성녀: 한 줄 내려오는 중
   for (const k of game.bricks) {
     if (!k.alive) continue;
     const r = game.brickReveal(k);
@@ -150,11 +264,13 @@ function drawPlaying(ctx: Ctx, game: Game): void {
     // 톡 튀어나오는 크기 변화: 0 → 살짝 크게 → 원래 크기
     const c1 = 1.70158, c3 = c1 + 1, u = r - 1;
     const s = 1 + c3 * u * u * u + c1 * u * u;
-    const b = k.rect;
+    const b = new Rect(k.rect.x, k.rect.y + shift, k.rect.w, k.rect.h);
     const color = k.item ? ITEM_COLOR : ROW_COLORS[k.row % ROW_COLORS.length];
     ctx.fillStyle = mix(color, (1 - r) * 0.7);
     ctx.fillRect(b.centerX - b.w * s / 2, b.centerY - b.h * s / 2, b.w * s, b.h * s);
   }
+
+  drawItems(ctx, game);
 
   const pad = game.paddle.bounds();
   pad.y += game.stompDip();
@@ -163,9 +279,9 @@ function drawPlaying(ctx: Ctx, game: Game): void {
   drawDevil(ctx, game);   // 공과 패들보다 나중에 그려서 공을 가림
 
   const my = World.Height * 0.5;   // 안내 문구는 세계 높이의 가운데쯤
-  if (game.reviving) {
-    text(ctx, '부활!', World.Width / 2, my, 34, '#fff3b0', { bold: true });
-    text(ctx, '성녀의 힘으로 한 번 더 도전해요', World.Width / 2, my + 50, 16, '#dcdce6');
+  if (game.serving && game.mode === 'survival') {
+    text(ctx, '준비!', World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
+    text(ctx, '3초마다 벽돌이 한 줄씩 내려와요', World.Width / 2, my + 50, 16, '#dcdce6');
   } else if (game.serving) {
     text(ctx, `STAGE ${game.stage}`, World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
     const sub = game.stage === 1 ? '준비!'
@@ -173,6 +289,39 @@ function drawPlaying(ctx: Ctx, game: Game): void {
       : '클리어! 공이 더 빨라져요';
     text(ctx, sub, World.Width / 2, my + 50, 16, '#dcdce6');
   }
+}
+
+// 떨어지는 아이템: 둥근 알약 모양에 효과 글자. 좋은 건 파랑, 나쁜 건 빨강
+function drawItems(ctx: Ctx, game: Game): void {
+  for (const it of game.items) {
+    const r = it.bounds();
+    const info = ITEM_INFO[it.kind];
+    roundRect(ctx, new Rect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3), (r.h + 3) / 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fill();
+    roundRect(ctx, r, r.h / 2);
+    ctx.fillStyle = info.good ? ITEM_GOOD : ITEM_BAD;
+    ctx.fill();
+    text(ctx, info.label, r.centerX, r.centerY + 1, 13, WHITE, { bold: true });
+  }
+}
+
+// 회색 벽: 테두리와 위쪽 밝은 줄로 돌처럼. 스테이지 시작 때 짧게 나타난다
+function drawWalls(ctx: Ctx, game: Game): void {
+  const a = game.wallReveal();
+  if (a <= 0 || game.walls.length === 0) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  for (const r of game.walls) {
+    ctx.fillStyle = WALL_DARK;
+    ctx.fillRect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3);
+    ctx.fillStyle = WALL_COLOR;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = WALL_LIGHT;
+    ctx.fillRect(r.x, r.y, r.w, 3);
+    ctx.fillRect(r.x, r.y, 3, r.h);
+  }
+  ctx.restore();
 }
 
 function drawMenu(ctx: Ctx, game: Game, v: View): void {
@@ -206,9 +355,13 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   text(ctx, Characters.List[game.selected].ability, World.Width / 2, 322, 16, ITEM_COLOR, { bold: true });
 
   if (game.lastResult === 'gameover') {
-    text(ctx, `게임 오버  ·  스테이지 ${game.stage}  ·  점수 ${game.score}`, World.Width / 2, 350, 17, '#f06e6e', { bold: true });
+    const lastMode = Characters.List[game.player.character].mode;
+    text(ctx, `게임 오버  ·  ${Characters.List[game.player.character].name}  ${formatRecord(lastMode, game.lastRecord)}`,
+      World.Width / 2, 350, 17, '#f06e6e', { bold: true });
   }
-  text(ctx, `최고 점수 ${game.bestScore}`, World.Width / 2, 376, 15, GRAY);
+  const selMode = Characters.List[game.selected].mode;
+  const selBest = game.bestRecord(game.selected);
+  text(ctx, selBest > 0 ? `최고 기록 ${formatRecord(selMode, selBest)}` : '아직 기록이 없어요', World.Width / 2, 376, 15, GRAY);
 
   // 시작 버튼은 살짝 숨쉬듯 커졌다 작아짐
   const pulse = 1 + 0.03 * Math.sin(v.time * 4);
@@ -217,8 +370,9 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   button(ctx, big, '시작하기', true, 24);
   if (v.rankingVisible) button(ctx, UI.ranking, '랭킹 보기', false, 17);
 
-  text(ctx, '화면 아래쪽을 좌우로 밀어 패들을 움직여요', World.Width / 2, 566, 15, GRAY);
-  text(ctx, '노란 벽돌을 깨면 공이 하나 더 생겨요', World.Width / 2, 592, 15, GRAY);
+  const hints = Characters.List[game.selected].hints;
+  text(ctx, hints[0], World.Width / 2, 566, 15, GRAY);
+  text(ctx, hints[1], World.Width / 2, 592, 15, GRAY);
   ctx.restore();
 }
 
@@ -289,17 +443,20 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
   ctx.stroke();
 
   if (playing) {
-    // 점수와 스테이지. 오른쪽 끝은 토스 버튼 자리라 비워 둠
+    // 지금 기록과 보조 정보. 오른쪽 끝은 토스 버튼 자리라 비워 둠
     const x = l.soundBtn.right + 14;
     const maxW = l.w - l.insets.right - TOSS_BUTTONS_W - x;
     const y = l.hudTop + HUD_H / 2;
+    const mode = game.mode;
+    const best = game.bestRecord(game.player.character);
+    const sw = game.swipe;
+    const sub = sw ? `ROUND ${sw.round} · 공 ${sw.ballCount}개` : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, l.hudTop, Math.max(0, maxW), HUD_H);
     ctx.clip();
-    text(ctx, `${game.score}`, x, y - 8, 20, WHITE, { bold: true, align: 'left' });
-    const extra = Characters.List[game.player.character].revives > 0 ? `   부활 ${game.revivesLeft}` : '';
-    text(ctx, `STAGE ${game.stage}${extra}`, x, y + 12, 12, ITEM_COLOR, { bold: true, align: 'left' });
+    text(ctx, formatRecord(mode, game.record), x, y - 8, 20, WHITE, { bold: true, align: 'left' });
+    text(ctx, sub, x, y + 12, 12, ITEM_COLOR, { bold: true, align: 'left' });
     ctx.restore();
   }
 }
@@ -322,7 +479,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   ctx.beginPath();
   ctx.rect(0, 0, World.Width, World.Height);
   ctx.clip();
-  if (game.state === 'playing') drawPlaying(ctx, game);
+  if (game.state === 'playing') drawPlaying(ctx, game, v);
   else drawMenu(ctx, game, v);
   drawOverlay(ctx, v.overlay);
   ctx.restore();
@@ -341,7 +498,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    text(ctx, '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
+    text(ctx, game.swipe ? '◀   여기를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
   }
 

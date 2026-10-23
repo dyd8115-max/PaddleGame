@@ -11,13 +11,20 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 // 플레이 중 캐릭터를 메뉴 카드 그림보다 크게
 export const PLAYER_SCALE = 1.5;
 
+// 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
+// stage:    패들로 받아 가두리 맵을 깨고 다음 맵으로. 몇 스테이지까지 갔나 (꼬마)
+// swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 공을 몇 발 쐈나 (엘프)
+// survival: 3초마다 벽돌 줄이 위에서 생겨 내려온다. 몇 초 버텼나 (성녀)
+export type GameMode = 'stage' | 'swipe' | 'survival';
+
 export interface CharacterDef {
   name: string;
   fps: number;        // 걷기 애니메이션 속도
-  ability: string;    // 메뉴에 보이는 능력 설명
-  dropMul: number;    // 벽돌을 깰 때 공이 하나 더 나올 확률 배율
+  mode: GameMode;
+  ability: string;    // 메뉴에 보이는 한 줄 설명
+  hints: [string, string];   // 메뉴 아래 안내 두 줄
+  speedMul: number;   // 공 빠르기 배율
   paddleW: number;    // 패들 길이
-  revives: number;    // 공을 모두 놓쳐도 다시 시작할 수 있는 횟수
 }
 
 export const Characters = {
@@ -25,9 +32,21 @@ export const Characters = {
   CellW: 67,     // 그리기 크기 (논리 좌표). 그림 파일은 2배 크기
   CellH: 80,
   List: [
-    { name: 'KID', fps: 15, ability: '벽돌을 깰 때 공이 나올 확률 3배', dropMul: 3, paddleW: 80, revives: 0 },
-    { name: 'ELF', fps: 13, ability: '패들이 1.5배 길어서 공을 받기 쉬워요', dropMul: 1, paddleW: 120, revives: 0 },
-    { name: 'SAINT', fps: 16, ability: '공을 다 놓쳐도 한 번 부활해요', dropMul: 1, paddleW: 80, revives: 1 },
+    {
+      name: 'KID', fps: 15, mode: 'stage', speedMul: 1, paddleW: 80,
+      ability: '가두리 맵 · 몇 스테이지까지 갈까',
+      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '회색 우리 안으로 공을 넣으면 한꺼번에 와르르'],
+    },
+    {
+      name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,
+      ability: '스와이프 벽돌깨기 · 공을 몇 발 쏠까',
+      hints: ['아래쪽을 밀어 자리를 고르고, 위를 당겨 조준', '숫자만큼 맞히면 깨져요. 바닥선에 닿으면 끝'],
+    },
+    {
+      name: 'SAINT', fps: 16, mode: 'survival', speedMul: 1.5, paddleW: 80,
+      ability: '빠른 공 · 내려오는 벽돌을 몇 초 버틸까',
+      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '3초마다 벽돌이 한 줄씩 내려와요. 선에 닿으면 끝'],
+    },
   ] as CharacterDef[],
 
   // 시작 메뉴의 캐릭터 카드 위치 (논리 좌표)
@@ -40,13 +59,14 @@ export const Characters = {
 
 export const BackgroundCount = 6;
 
-// 공 종류: 하양은 기본, 빨강은 2배 빠르고, 초록은 0.5배 느리다 (스테이지 빠르기에 곱함)
+// 공 종류: 하양은 기본, 빨강은 1.5배 빠르고, 초록은 0.5배 느리다 (스테이지 빠르기에 곱함)
 export type BallKind = 'white' | 'red' | 'green';
-export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 2, green: 0.5 };
+export const BALL_SPEED_MUL: Record<BallKind, number> = { white: 1, red: 1.5, green: 0.5 };
 
 export class Ball {
   size = 10;
   kind: BallKind = 'white';
+  idle = 0;   // 마지막으로 벽돌을 깬 뒤 지난 시간 (같은 길만 도는지 확인용)
   constructor(public pos = new Vec2(), public vel = new Vec2()) {}
   bounds(): Rect { return new Rect(this.pos.x, this.pos.y, this.size, this.size); }
 }
@@ -106,6 +126,9 @@ export class Devil {
   stompTimer = 0;     // 착지 직후 패들이 눌리는 연출 남은 시간
   x = 0;              // 그리기용 칸 좌상단 (매 프레임 계산)
   y = 0;
+  bodyX = 240;        // 엘프 모드: 몸통 가운데 x (패들 대신 화면 위쪽을 걸어다님)
+  baseY = 0;          // 엘프 모드: 발 높이 (벽돌 맨 아랫줄을 따라 오르내림)
+  scale = 1;          // 그리기 배율 (엘프 모드에서는 크게 그려서 벽돌을 더 가림)
 
   bounds(): Rect { return new Rect(this.x, this.y, DevilSprite.Cell, DevilSprite.Cell); }
 
@@ -128,7 +151,25 @@ export class Brick {
   constructor(
     public rect: Rect,
     public row: number,
-    public item: boolean,     // 깨지면 공 하나 추가
+    public item: boolean,     // 노란 벽돌: 깨지면 아이템이 꼭 떨어짐
     public appearAt: number,  // 스테이지 시작 후 이 시각(초)에 나타남
   ) {}
+}
+
+// 벽돌에서 떨어지는 아이템. 패들로 받으면 효과가 난다
+export type ItemKind = 'ballX2' | 'ballX3' | 'ballHalf' | 'padLong' | 'padShort';
+export const ITEM_KINDS: ItemKind[] = ['ballX2', 'ballX3', 'ballHalf', 'padLong', 'padShort'];
+export const ITEM_INFO: Record<ItemKind, { label: string; good: boolean }> = {
+  ballX2: { label: '공×2', good: true },
+  ballX3: { label: '공×3', good: true },
+  ballHalf: { label: '공÷2', good: false },
+  padLong: { label: '패들×1.5', good: true },
+  padShort: { label: '패들÷3', good: false },
+};
+
+export class Item {
+  w = 62;
+  h = 22;
+  constructor(public kind: ItemKind, public x: number, public y: number) {}   // x, y 는 왼쪽 위
+  bounds(): Rect { return new Rect(this.x, this.y, this.w, this.h); }
 }
