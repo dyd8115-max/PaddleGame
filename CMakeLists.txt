@@ -15,6 +15,7 @@ add_executable(PaddleBreakout WIN32
 )
 
 target_link_libraries(PaddleBreakout PRIVATE gdi32 msimg32 winmm imm32)
+target_compile_definitions(PaddleBreakout PRIVATE NOMINMAX UNICODE _UNICODE)
 
 if(MSVC)
     target_compile_options(PaddleBreakout PRIVATE /utf-8 /W4)

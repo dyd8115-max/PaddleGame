@@ -1,4 +1,7 @@
 ﻿// Win32 + GDI 플랫폼 계층: 창, 입력 전달, 게임 루프, 그리기만 담당
+#ifndef NOMINMAX
+#define NOMINMAX   // windows.h 의 min/max 매크로가 std::min/std::max 와 충돌하지 않게 (Visual Studio)
+#endif
 #include <windows.h>
 #include <windowsx.h>
 #include <imm.h>

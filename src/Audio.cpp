@@ -1,4 +1,7 @@
 ﻿#include "Audio.h"
+#ifndef NOMINMAX
+#define NOMINMAX   // windows.h 의 min/max 매크로가 std::min/std::max 와 충돌하지 않게 (Visual Studio)
+#endif
 #include <windows.h>
 #include <mmsystem.h>
 #include <algorithm>
