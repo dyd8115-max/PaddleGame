@@ -5,6 +5,7 @@ import { Rect, Vec2 } from './geometry';
 import { bounceOff, nudge } from './collide';
 import { Swipe, type SwipeSave } from './swipe';
 import { Archer } from './archer';
+import { Climb } from './climb';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -109,7 +110,8 @@ export class Game {
   bricks: Brick[] = [];
   walls: Rect[] = [];   // 회색 벽 (깨지지 않음)
   swipe: Swipe | null = null;   // 꼬마 모드일 때만
-  archer: Archer | null = null; // 엘프 모드일 때만
+  archer: Archer | null = null; // 궁수 모드일 때만 (지금은 쓰지 않음)
+  climb: Climb | null = null;   // 꼬마 모드일 때만
   private events_: GameEvent[] = [];
 
   constructor() {
@@ -133,6 +135,7 @@ export class Game {
   // 지금 판의 기록: 꼬마는 라운드, 엘프는 스테이지, 성녀는 버틴 초
   get record(): number {
     if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
+    if (this.mode === 'climb') return this.climb ? this.climb.stage : this.lastRecord_;
     if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
     if (this.mode === 'survival') return Math.floor(this.survivalTime_ * 10) / 10;
     return this.stage_;
@@ -227,8 +230,10 @@ export class Game {
     this.pickBackground();   // 게임마다 배경을 무작위로
     this.swipe = null;
     this.archer = null;
+    this.climb = null;
     this.hearts_ = MINE_HEARTS;
-    if (ch.mode === 'swipe') this.startSwipe(save);
+    if (ch.mode === 'climb') this.startClimb();
+    else if (ch.mode === 'swipe') this.startSwipe(save);
     else if (ch.mode === 'archer') this.startArcher();
     else if (ch.mode === 'survival') this.startSurvival();
     else this.startStage(true);
@@ -259,7 +264,26 @@ export class Game {
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
   }
 
-  // 엘프 모드: 궁수
+  // 꼬마 모드: 블록 피해 오르기
+  private startClimb(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.climb = new Climb({
+      hurt: () => this.events_.push('hurt'),
+      land: () => this.events_.push('brickHit'),
+      jump: () => undefined,
+      stageClear: () => { this.score_ += 100; this.events_.push('stageClear'); },
+      lineClear: (n) => { this.score_ += 20 * n; this.events_.push('brickBreak'); },
+      bump: () => this.events_.push('brickBreak'),
+      gameOver: () => this.endGame('gameover'),
+    });
+  }
+
+  // 궁수 모드
   private startArcher(): void {
     this.balls = [];
     this.items = [];
@@ -330,6 +354,20 @@ export class Game {
 
     if (this.state_ !== 'playing') {
       this.menuTime_ += dt;
+      return;
+    }
+
+    if (this.climb) {
+      const c = this.climb;
+      c.update(dt);
+      if (this.climb) {
+        this.stage_ = c.stage;
+        const p = this.player;
+        if (c.vx !== 0) p.facingLeft = c.vx < 0;
+        const was = p.walking;
+        p.walking = c.moving && c.grounded;
+        if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;
+      }
       return;
     }
 
@@ -791,6 +829,7 @@ export class Game {
     this.items = [];
     this.swipe = null;
     this.archer = null;
+    this.climb = null;
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');

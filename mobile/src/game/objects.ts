@@ -12,12 +12,13 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 export const PLAYER_SCALE = 1.5;
 
 // 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
-// mine:     지뢰 벽돌깨기. 패들로 받고, 지뢰 같은 벽돌은 톡 쳐서 깃발. 몇 스테이지까지 갔나 (꼬마)
+// climb:    떨어지는 테트리스 블록을 피해 쌓인 블록을 밟고 빨간 선까지. 몇 스테이지까지 갔나 (꼬마)
+// mine:     지뢰 벽돌깨기 (지금은 쓰지 않음)
 // swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (엘프)
 // archer:   궁수의 전설처럼 움직이다 멈추면 자동 발사 (지금은 쓰지 않음)
 // survival: 3초마다 벽돌 줄이 위에서 생겨 내려온다. 몇 초 버텼나 (성녀)
 // stage:    패들로 받아 벽돌을 깨고 다음 맵으로 (지금은 쓰지 않음)
-export type GameMode = 'stage' | 'mine' | 'swipe' | 'archer' | 'survival';
+export type GameMode = 'stage' | 'climb' | 'mine' | 'swipe' | 'archer' | 'survival';
 
 export interface CharacterDef {
   name: string;
@@ -35,9 +36,9 @@ export const Characters = {
   CellH: 80,
   List: [
     {
-      name: 'KID', fps: 15, mode: 'mine', speedMul: 1, paddleW: 80,
-      ability: '지뢰 벽돌깨기 · 몇 스테이지까지 갈까',
-      hints: ['숫자는 주변 8칸의 지뢰 수. 지뢰 같으면 톡 쳐서 깃발', '깃발 벽돌은 공이 그냥 지나가요. 지뢰 빼고 다 깨면 클리어'],
+      name: 'KID', fps: 15, mode: 'climb', speedMul: 1, paddleW: 80,
+      ability: '블록 피해 오르기 · 몇 스테이지까지 갈까',
+      hints: ['누른 쪽으로 걷고, 톡 치면 점프 (공중에서 한 번 더)', '떨어지는 블록을 피해 밟고 올라 빨간 선까지'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,

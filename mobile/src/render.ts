@@ -4,6 +4,7 @@ import type { Game } from './game/game';
 import { Rect } from './game/geometry';
 import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
 import { SKILLS } from './game/archer';
+import { CELL, KID_H, KID_W, PIECE_COLORS } from './game/climb';
 
 const ARROW_SPEED_DRAW = 720;   // 화살 꼬리 길이 계산용 (archer.ts 의 화살 빠르기)
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
@@ -154,7 +155,7 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
 // 기록 글자: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 시간
 function formatRecord(mode: GameMode, v: number): string {
   if (mode === 'swipe') return `ROUND ${v}`;
-  if (mode === 'archer') return `STAGE ${v}`;
+  if (mode === 'archer' || mode === 'climb') return `STAGE ${v}`;
   if (mode === 'survival') {
     if (v < 60) return `${v.toFixed(1)}초`;
     return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
@@ -163,6 +164,67 @@ function formatRecord(mode: GameMode, v: number): string {
 }
 
 // ---------- 게임 영역 (논리 좌표) ----------
+// ---------- 꼬마 오르기 모드 ----------
+function drawBlock(ctx: Ctx, r: Rect, color: string, alpha = 1): void {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, 4);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(r.x + 1, r.bottom - 5, r.w - 2, 4);
+  ctx.globalAlpha = 1;
+}
+
+function drawClimb(ctx: Ctx, game: Game, v: View): void {
+  const c = game.climb!;
+
+  // 빨간 선: 머리가 닿으면 클리어
+  ctx.save();
+  ctx.setLineDash([12, 8]);
+  ctx.strokeStyle = 'rgba(255,80,80,0.9)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, c.lineY);
+  ctx.lineTo(World.Width, c.lineY);
+  ctx.stroke();
+  ctx.restore();
+  text(ctx, '도착', World.Width - 26, c.lineY - 12, 13, '#ff8080', { bold: true });
+
+  // 쌓인 블록
+  for (let r = 0; r < c.grid.length; r++) {
+    for (let col = 0; col < c.grid[r].length; col++) {
+      const k = c.grid[r][col];
+      if (k >= 0) drawBlock(ctx, c.cellRect(col, r), PIECE_COLORS[k]);
+    }
+  }
+  // 떨어질 자리 그림자, 떨어지는 블록
+  for (const p of c.pieces) {
+    const lr = c.landRow(p);
+    for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellRect(p.col + cx, lr + cy), PIECE_COLORS[p.color], 0.22);
+  }
+  for (const p of c.pieces) {
+    for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellAt(p, cx, cy), PIECE_COLORS[p.color]);
+  }
+
+  // 꼬마: 판정 상자 아랫면에 맞춰 그림 (맞은 직후 깜빡임)
+  const p = game.player;
+  if (c.invuln <= 0 || Math.floor(v.time * 12) % 2 === 0) {
+    const w = CELL * 1.15, h = w * (Characters.CellH / Characters.CellW);
+    const dst = new Rect(c.x + KID_W / 2 - w / 2, c.y + KID_H - h + 2, w, h);
+    drawCharacter(ctx, p.character, p.frame(), p.facingLeft, dst);
+  }
+
+  const my = World.Height * 0.42;
+  if (c.clearTimer > 0) {
+    text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
+    text(ctx, '다음 스테이지는 블록이 더 빨라요', World.Width / 2, my + 42, 16, '#dcdce6');
+  } else if (c.stage === 1 && c.time < 3.5) {
+    text(ctx, '블록을 피해 밟고 올라 빨간 선까지!', World.Width / 2, my, 19, WHITE, { bold: true });
+    text(ctx, '누른 쪽으로 걷고, 톡 치면 점프', World.Width / 2, my + 32, 15, '#dcdce6');
+  }
+}
+
 // ---------- 꼬마 지뢰 모드 ----------
 const MINE_NUM_COLOR = ['', '#5aa9ff', '#4ddc7a', '#ff6b6b', '#c38bff', '#ffb347', '#4dd6d6', '#ffffff', '#aaaaaa'];
 
@@ -427,6 +489,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
 }
 
 function drawPlaying(ctx: Ctx, game: Game, v: View): void {
+  if (game.climb) { drawClimb(ctx, game, v); return; }
   if (game.archer) { drawArcher(ctx, game, v); return; }
   if (game.swipe) { drawSwipe(ctx, game, v); return; }
   const p = game.player;
@@ -650,7 +713,8 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
+    const sub = game.climb ? `체력 ${game.climb.hearts}/3`
+      : mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
       : sw ? `공 ${sw.ballCount}개`
       : ar ? `Lv ${ar.level} · 체력 ${Math.max(0, ar.hp)}/${ar.maxHp}`
       : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
@@ -701,7 +765,8 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    const hint = game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
+    const hint = game.climb ? '누른 쪽으로 걷기 · 톡 치거나 위로 튕기면 점프'
+      : game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
       : game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';
     text(ctx, hint, l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
