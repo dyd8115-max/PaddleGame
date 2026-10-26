@@ -2,7 +2,7 @@
 //
 // - 아래쪽을 밀면 엘프가 걸어가 쏠 자리를 고르고, 위쪽을 누른 채 아래로 당기면 반대쪽으로 조준선이 보인다
 // - 손을 떼면 가진 공을 차례로 쏜다. 기록은 도달한 라운드. 조준 단계마다 중간 저장
-// - 벽돌의 숫자만큼 맞혀야 깨진다. 초록 동그라미(+1, 두 줄에 하나)를 지나가면 다음 차례부터 공이 하나 늘어난다
+// - 벽돌의 숫자만큼 맞혀야 깨진다. 초록 동그라미(+1, 라운드마다 하나)를 지나가면 다음 차례부터 공이 하나 늘어난다
 // - 공이 모두 바닥에 돌아오면 새 벽돌 줄이 1~3줄(50%, 30%, 20%) 생기면서 한꺼번에 내려온다. 바닥선에 닿으면 끝
 // - 공 빠르기는 라운드와 상관없이 일정하다 (한 차례가 오래 걸리면 빨라지기만 함)
 import { Rect, Vec2 } from './geometry';
@@ -63,7 +63,7 @@ export class Swipe {
   round = 1;
   ballCount = 1;            // 가진 공 수
   launchX = World.Width / 2; // 쏠 자리 (공 가운데 x). 조준 단계에서 엘프가 걸어가 정한다
-  rowCount = 0;              // 지금까지 만든 줄 수 (+1 은 두 줄에 하나)
+  rowCount = 0;              // 지금까지 만든 줄 수
   newRows = 1;               // 이번에 새로 생긴 줄 수 (내려오는 그림용)
   bricks: SwipeBrick[] = [];
   pickups: Pickup[] = [];
@@ -89,7 +89,7 @@ export class Swipe {
       this.bricks = save.bricks.map(([c, r, hp]) => new SwipeBrick(c, r, hp));
       this.pickups = save.pickups.map(([c, r]) => new Pickup(c, r));
     } else {
-      this.spawnRow(0);
+      this.spawnRow(0, true);
     }
   }
 
@@ -294,7 +294,7 @@ export class Swipe {
     for (const b of this.bricks) b.row += k;
     for (const p of this.pickups) p.row += k;
     this.pickups = this.pickups.filter((p) => p.row <= this.lastRow);   // 바닥까지 온 +1 은 사라짐
-    for (let row = 0; row < k; row++) this.spawnRow(row);
+    for (let row = 0; row < k; row++) this.spawnRow(row, row === 0);   // +1 은 차례마다 하나 (맨 위 줄에)
     this.newRows = k;
     this.slide = 0;
     this.phase = 'advance';
@@ -302,7 +302,7 @@ export class Swipe {
   }
 
   // 새 줄: 벽돌 수는 1~6개 무작위, 숫자는 라운드 (가끔 2배), 빈칸 하나에 +1
-  private spawnRow(row: number): void {
+  private spawnRow(row: number, withPickup: boolean): void {
     const n = this.round;
     const count = 1 + randInt(COLS - 1);
     const cols = [...Array(COLS).keys()].sort(() => Math.random() - 0.5);
@@ -310,8 +310,7 @@ export class Swipe {
       const hp = n >= 5 && Math.random() < 0.2 ? n * 2 : n;
       this.bricks.push(new SwipeBrick(cols[i], row, hp));
     }
-    // +1 은 두 줄에 하나만
-    if (this.rowCount % 2 === 0) this.pickups.push(new Pickup(cols[count], row));
+    if (withPickup) this.pickups.push(new Pickup(cols[count], row));
     this.rowCount++;
   }
 }
