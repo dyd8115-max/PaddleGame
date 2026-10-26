@@ -1,5 +1,5 @@
 // 게임 로직 전체. 화면, 입력, 소리에 의존하지 않는다.
-// 캐릭터마다 방식이 다르다: 꼬마 stage(무작위 회색 블록), 엘프 swipe(swipe.ts), 성녀 survival(내려오는 벽돌 버티기)
+// 캐릭터마다 방식이 다르다: 꼬마 mine(지뢰 벽돌깨기), 엘프 swipe(swipe.ts), 성녀 survival(내려오는 벽돌 버티기)
 // 플랫폼 쪽은 입력 전달, update(dt) 호출, 상태를 읽어 그리기, takeEvents() 로 소리 처리만 한다.
 import { Rect, Vec2 } from './geometry';
 import { bounceOff, nudge } from './collide';
@@ -67,6 +67,13 @@ const KID_LAYOUTS: string[][] = [
 ];
 const GREY_MAX = 7;
 
+// 꼬마: 지뢰 벽돌깨기
+const MINE_COLS = 8;
+const MINE_ROWS = 6;
+const MINE_CELL_H = 26;
+const MINE_HEARTS = 3;
+const MINE_SPEED_STEP = 1.1;   // 스테이지마다 공이 빨라지는 폭 (생각할 시간이 필요해서 작게)
+
 const BRICK_TOP = 60;
 const BRICK_MARGIN = 20;
 const BRICK_GAP = 4;
@@ -90,6 +97,9 @@ export class Game {
   private rowTimer_ = 0;      // 성녀: 다음 줄까지 남은 시간
   private rowSerial_ = 0;     // 성녀: 줄마다 색을 다르게
   private shift_ = 0;         // 성녀: 한 줄 내려오는 그림 (1 → 0)
+  private hearts_ = 0;        // 꼬마: 남은 체력 (지뢰를 터뜨리거나 공을 다 놓치면 -1)
+  mineNumbers: { rect: Rect; n: number }[] = [];   // 꼬마: 깬 칸에 드러난 숫자
+  exploded: Rect[] = [];      // 꼬마: 터진 지뢰 자리
 
   readonly paddle = new Paddle();
   readonly player = new Player();
@@ -118,6 +128,8 @@ export class Game {
   get lastRecord(): number { return this.lastRecord_; }
   get survivalTime(): number { return this.survivalTime_; }
   get dangerY(): number { return this.paddle.y - DANGER_ABOVE_PADDLE; }
+  get hearts(): number { return this.hearts_; }
+  get minesLeft(): number { return this.bricks.filter((k) => k.alive && k.mine).length - this.bricks.filter((k) => k.alive && k.flag).length; }
   // 지금 판의 기록: 꼬마는 라운드, 엘프는 스테이지, 성녀는 버틴 초
   get record(): number {
     if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
@@ -215,6 +227,7 @@ export class Game {
     this.pickBackground();   // 게임마다 배경을 무작위로
     this.swipe = null;
     this.archer = null;
+    this.hearts_ = MINE_HEARTS;
     if (ch.mode === 'swipe') this.startSwipe(save);
     else if (ch.mode === 'archer') this.startArcher();
     else if (ch.mode === 'survival') this.startSurvival();
@@ -364,12 +377,19 @@ export class Game {
     }
 
     for (const b of this.balls) this.moveBall(b, dt);
+    if (this.state_ !== 'playing') return;   // 지뢰로 체력이 다 떨어진 경우
     this.updateItems(dt);
 
     // 아래로 빠진 공 제거
     this.balls = this.balls.filter((b) => b.pos.y <= World.Height);
 
     if (this.balls.length === 0) {
+      if (this.mode === 'mine' && --this.hearts_ > 0) {   // 꼬마: 체력이 남아 있으면 다시 출발
+        this.events_.push('hurt');
+        this.balls.push(this.makeBall(new Vec2(this.paddle.bounds().centerX, this.paddle.y - BALL_SIZE)));
+        this.serveTimer_ = SERVE_TIME;
+        return;
+      }
       this.endGame('gameover');
       return;
     }
@@ -379,8 +399,8 @@ export class Game {
       return;
     }
 
-    // 벽돌을 다 깨면 다음 스테이지로
-    if (!this.bricks.some((k) => k.alive)) {
+    // 벽돌을 다 깨면 다음 스테이지로 (지뢰 모드는 지뢰 아닌 벽돌만)
+    if (!this.bricks.some((k) => k.alive && !k.mine)) {
       this.stage_++;
       this.pickBackground();
       this.startStage(true);
@@ -409,9 +429,9 @@ export class Game {
     this.items = [];
     this.paddle.w = ch.paddleW;   // 아이템으로 바뀐 패들 길이는 스테이지마다 원래대로
     this.updatePaddle();
-    this.resetBricks();
+    if (ch.mode === 'mine') this.resetMineBricks(); else this.resetBricks();
     this.introTime_ = 0;
-    this.spawnDevil();
+    if (ch.mode === 'mine') this.devil = new Devil(); else this.spawnDevil();
     const spawn = new Vec2(this.paddle.bounds().centerX, this.paddle.y - BALL_SIZE);
     this.balls.push(this.makeBall(spawn));
     this.serveTimer_ = wait ? SERVE_TIME : 0;
@@ -425,7 +445,8 @@ export class Game {
 
   private ballSpeed(kind: BallKind = 'white'): number {
     const mul = Characters.List[this.player.character].speedMul;   // 성녀는 1.5배
-    const white = BALL_SPEED * mul * Math.min(SPEED_MAX, Math.pow(SPEED_STEP, this.stage_ - 1));
+    const step = this.mode === 'mine' ? MINE_SPEED_STEP : SPEED_STEP;
+    const white = BALL_SPEED * mul * Math.min(SPEED_MAX, Math.pow(step, this.stage_ - 1));
     return Math.min(SPEED_ABS_MAX, white * BALL_SPEED_MUL[kind]);
   }
 
@@ -549,12 +570,16 @@ export class Game {
 
   private collideBricks(b: Ball): void {
     const br = b.bounds();
-    const k = this.bricks.find((q) => q.alive && q.rect.intersects(br));
+    // 지뢰 모드: 깃발 꽂힌 벽돌은 해제된 것으로 보고 공이 그대로 통과
+    const mine = this.mode === 'mine';
+    const k = this.bricks.find((q) => q.alive && !(mine && q.flag) && q.rect.intersects(br));
     if (!k) return;
 
     const r = k.rect;
     bounceOff(b, r);
     b.idle = 0;
+
+    if (mine) { this.hitMineBrick(k); return; }
 
     k.alive = false;
     this.score_ += 10;
@@ -568,6 +593,72 @@ export class Game {
       it.y = r.centerY - it.h / 2;
       this.items.push(it);
     }
+  }
+
+  // ---------- 꼬마: 지뢰 벽돌깨기 ----------
+  // 8x6 격자를 벽돌로 채우고 일부를 지뢰로. 지뢰 수는 스테이지마다 늘어남
+  // 맨 아랫줄에는 지뢰를 두지 않아서 처음 몇 번은 안전하게 깨고 숫자를 볼 수 있다
+  private resetMineBricks(): void {
+    this.bricks = [];
+    this.walls = [];
+    this.mineNumbers = [];
+    this.exploded = [];
+    const w = (World.Width - BRICK_MARGIN * 2 - BRICK_GAP * (MINE_COLS - 1)) / MINE_COLS;
+    for (let r = 0; r < MINE_ROWS; r++) {
+      for (let c = 0; c < MINE_COLS; c++) {
+        const rect = new Rect(BRICK_MARGIN + c * (w + BRICK_GAP), BRICK_TOP + r * (MINE_CELL_H + BRICK_GAP), w, MINE_CELL_H);
+        const k = new Brick(rect, r, false, Math.random() * FILL_TIME);
+        k.col = c;
+        this.bricks.push(k);
+      }
+    }
+    const mines = Math.min(14, 5 + 2 * (this.stage_ - 1));
+    const spots = [...this.bricks.keys()].filter((i) => this.bricks[i].row < MINE_ROWS - 1);
+    for (const i of spots.sort(() => Math.random() - 0.5).slice(0, mines)) this.bricks[i].mine = true;
+  }
+
+  private mineAt(c: number, r: number): Brick | undefined {
+    if (c < 0 || c >= MINE_COLS || r < 0 || r >= MINE_ROWS) return undefined;
+    return this.bricks[r * MINE_COLS + c];
+  }
+
+  private hitMineBrick(k: Brick): void {
+    if (k.mine) {
+      k.alive = false;
+      this.exploded.push(k.rect);
+      this.events_.push('hurt');
+      if (--this.hearts_ <= 0) this.endGame('gameover');
+      return;
+    }
+    this.revealMine(k);
+    this.events_.push('brickBreak');
+  }
+
+  // 지뢰 아닌 벽돌을 깨고 주변 지뢰 수를 보여 줌. 0 이면 이웃도 저절로 깨짐 (지뢰찾기처럼)
+  private revealMine(k: Brick): void {
+    if (!k.alive || k.mine || k.flag) return;
+    k.alive = false;
+    this.score_ += 10;
+    let n = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if ((dr || dc) && this.mineAt(k.col + dc, k.row + dr)?.mine) n++;
+    }
+    this.mineNumbers.push({ rect: k.rect, n });
+    if (n === 0) {
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const q = this.mineAt(k.col + dc, k.row + dr);
+        if (q && q !== k) this.revealMine(q);
+      }
+    }
+  }
+
+  // 누른 곳이 남은 벽돌이면 깃발을 꽂거나 뽑음. 벽돌을 눌렀으면 true
+  toggleFlag(x: number, y: number): boolean {
+    if (this.state_ !== 'playing' || this.mode !== 'mine') return false;
+    const k = this.bricks.find((q) => q.alive && q.rect.contains(x, y));
+    if (!k) return false;
+    k.flag = !k.flag;
+    return true;
   }
 
   // ---------- 아이템 ----------

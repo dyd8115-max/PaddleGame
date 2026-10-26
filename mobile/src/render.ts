@@ -163,6 +163,59 @@ function formatRecord(mode: GameMode, v: number): string {
 }
 
 // ---------- 게임 영역 (논리 좌표) ----------
+// ---------- 꼬마 지뢰 모드 ----------
+const MINE_NUM_COLOR = ['', '#5aa9ff', '#4ddc7a', '#ff6b6b', '#c38bff', '#ffb347', '#4dd6d6', '#ffffff', '#aaaaaa'];
+
+function drawMineBoard(ctx: Ctx, game: Game): void {
+  // 깬 칸: 어두운 바탕에 주변 지뢰 수
+  for (const m of game.mineNumbers) {
+    ctx.fillStyle = 'rgba(10,12,20,0.55)';
+    ctx.fillRect(m.rect.x, m.rect.y, m.rect.w, m.rect.h);
+    if (m.n > 0) text(ctx, String(m.n), m.rect.centerX, m.rect.centerY + 1, 17, MINE_NUM_COLOR[m.n], { bold: true });
+  }
+  // 터진 지뢰
+  for (const r of game.exploded) {
+    ctx.fillStyle = 'rgba(120,20,20,0.75)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.beginPath();
+    ctx.arc(r.centerX, r.centerY, 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fill();
+    ctx.strokeStyle = '#ffcf5a';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      ctx.beginPath();
+      ctx.moveTo(r.centerX + Math.cos(a) * 8, r.centerY + Math.sin(a) * 8);
+      ctx.lineTo(r.centerX + Math.cos(a) * 12, r.centerY + Math.sin(a) * 12);
+      ctx.stroke();
+    }
+  }
+  // 아직 안 깬 벽돌: 모두 같은 색 (지뢰인지 모름), 깃발 벽돌은 빨간 깃발
+  for (const k of game.bricks) {
+    if (!k.alive) continue;
+    const t = game.brickReveal(k);
+    if (t <= 0) continue;
+    const b = k.rect;
+    ctx.fillStyle = mix('#6a7896', (1 - t) * 0.7);
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(b.x, b.y, b.w, 3);
+    if (k.flag) {
+      const x = b.centerX - 4, y = b.y + 4;
+      ctx.fillStyle = '#e6e6e6';
+      ctx.fillRect(x, y, 2, b.h - 8);
+      ctx.fillStyle = '#ff4d4d';
+      ctx.beginPath();
+      ctx.moveTo(x + 2, y);
+      ctx.lineTo(x + 14, y + 5);
+      ctx.lineTo(x + 2, y + 10);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
 // ---------- 엘프 궁수 모드 ----------
 function drawArcher(ctx: Ctx, game: Game, v: View): void {
   const a = game.archer!;
@@ -394,8 +447,11 @@ function drawPlaying(ctx: Ctx, game: Game, v: View): void {
     ctx.restore();
   }
 
+  if (game.mode === 'mine') drawMineBoard(ctx, game);
+
   const shift = game.brickShift();   // 성녀: 한 줄 내려오는 중
   for (const k of game.bricks) {
+    if (game.mode === 'mine') break;   // 지뢰 모드는 위에서 따로 그림
     if (!k.alive) continue;
     const r = game.brickReveal(k);
     if (r <= 0) continue;
@@ -420,6 +476,9 @@ function drawPlaying(ctx: Ctx, game: Game, v: View): void {
   if (game.serving && game.mode === 'survival') {
     text(ctx, '준비!', World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
     text(ctx, '3초마다 벽돌이 한 줄씩 내려와요', World.Width / 2, my + 50, 16, '#dcdce6');
+  } else if (game.serving && game.mode === 'mine') {
+    text(ctx, `STAGE ${game.stage}`, World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
+    text(ctx, game.stage === 1 ? '지뢰 같은 벽돌은 톡 쳐서 깃발!' : `지뢰가 늘어요 · 남은 체력 ${game.hearts}`, World.Width / 2, my + 50, 16, '#dcdce6');
   } else if (game.serving) {
     text(ctx, `STAGE ${game.stage}`, World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
     const sub = game.stage === 1 ? '준비!'
@@ -591,7 +650,8 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = sw ? `공 ${sw.ballCount}개`
+    const sub = mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
+      : sw ? `공 ${sw.ballCount}개`
       : ar ? `Lv ${ar.level} · 체력 ${Math.max(0, ar.hp)}/${ar.maxHp}`
       : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
     ctx.save();

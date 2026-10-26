@@ -25,8 +25,8 @@ let clock = 0;
 
 // ---------- 저장 ----------
 // 캐릭터별 최고 기록 (게임 방식이 바뀌면 키도 바꿔서 단위가 다른 옛 기록과 섞이지 않게)
-const KEY_BEST = (ch: number) => ['best0r', 'best1s', 'best2'][ch];
-const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(꼬마) 중간 저장
+const KEY_BEST = (ch: number) => ['best0m', 'best1r', 'best2'][ch];
+const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(엘프) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
 
@@ -83,7 +83,7 @@ const lx = (e: { clientX: number }) => e.clientX - rect.left;
 const ly = (e: { clientY: number }) => e.clientY - rect.top;
 
 // ---------- 동작 ----------
-// 꼬마(스와이프)는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
+// 엘프(스와이프)는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
 function start(fresh = false): void {
   if (game.state !== 'menu') return;
   const isElf = Characters.List[game.selected].mode === 'swipe';
@@ -134,7 +134,8 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
 
 // ---------- 터치, 마우스 ----------
 let downX = 0, downY = 0, downAt = 0, activePointer = -1;
-let elfWalking = false;   // 엘프 모드에서 지금 손가락이 자리 옮기기 중인지
+let elfWalking = false;
+let flagTap = false;      // 꼬마 지뢰 모드: 이번 손가락은 깃발 꽂기라 패들을 움직이지 않음   // 엘프 모드에서 지금 손가락이 자리 옮기기 중인지
 
 function hudSoundRect() { return game.state === 'playing' ? layout.soundBtn : layout.pauseBtn; }
 
@@ -143,7 +144,7 @@ function movePaddle(x: number): void {
   game.setPaddleTarget(toWorld(layout, x, 0).x);
 }
 
-// 꼬마 모드: 누른 채 당겨서 조준
+// 엘프 모드(스와이프): 누른 채 당겨서 조준
 function swipeActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.swipe !== null; }
 // 엘프 모드: 끌어서 이동, 레벨업 카드 고르기
 function archerActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.archer !== null; }
@@ -160,6 +161,11 @@ canvas.addEventListener('pointerdown', (e) => {
     pause();
     return;
   }
+  flagTap = false;
+  if (game.state === 'playing' && overlay === 'none' && game.mode === 'mine') {
+    const p = toWorld(layout, lx(e), ly(e));
+    if (game.toggleFlag(p.x, p.y)) { flagTap = true; return; }   // 벽돌을 누르면 깃발
+  }
   if (archerActive()) {
     const p = toWorld(layout, lx(e), ly(e));
     const a = game.archer!;
@@ -168,7 +174,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (swipeActive()) {
-    // 꼬마: 흰 바닥선 아래는 걸어서 자리 옮기기, 그 위는 당겨서 조준
+    // 엘프: 흰 바닥선 아래는 걸어서 자리 옮기기, 그 위는 당겨서 조준
     const p = toWorld(layout, lx(e), ly(e));
     elfWalking = p.y >= game.paddle.y + game.paddle.h;   // 흰 바닥선 아래는 걷기, 위는 조준
     if (elfWalking) game.setPaddleTarget(p.x);
@@ -189,6 +195,7 @@ canvas.addEventListener('pointermove', (e) => {
     if (e.pointerId === activePointer) game.archer!.joyMove(lx(e), ly(e));
     return;
   }
+  if (flagTap && e.pointerId === activePointer) return;
   if (swipeActive()) {
     if (e.pointerId === activePointer) {
       const p = toWorld(layout, lx(e), ly(e));
@@ -289,12 +296,12 @@ function frame(now: number): void {
     if (name === 'brick') lastBrickSound = clock;
     audio.play(name);
     if (e === 'gameOver') {
-      if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움 (꼬마)
+      if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움 (엘프)
       finishGame();
     }
   }
 
-  // 꼬마(스와이프): 새 라운드 조준 단계가 될 때마다 중간 저장
+  // 엘프(스와이프): 새 라운드 조준 단계가 될 때마다 중간 저장
   const sw = game.swipe;
   if (sw && sw.phase === 'aim' && sw.round !== savedRound) {
     savedRound = sw.round;
