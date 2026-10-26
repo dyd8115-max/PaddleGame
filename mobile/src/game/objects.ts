@@ -38,7 +38,7 @@ export const Characters = {
     {
       name: 'KID', fps: 15, mode: 'climb', speedMul: 1, paddleW: 80,
       ability: '블록 피해 오르기 · 몇 스테이지까지 갈까',
-      hints: ['누른 쪽으로 걷고, 톡 치면 점프 (공중에서 한 번 더)', '떨어지는 블록을 피해 밟고 올라 빨간 선까지'],
+      hints: ['왼쪽 아래 ◀ ▶ 로 걷고, 오른쪽 아래 버튼으로 점프', '떨어지는 블록을 피해 밟고 올라 빨간 선까지 (2단 점프)'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,

@@ -1,11 +1,11 @@
 // 꼬마 모드: 떨어지는 테트리스 블록 피하며 올라가기
 //
 // - 하늘에서 테트리스 블록이 떨어져 바닥과 쌓인 블록 위에 쌓인다
-// - 꼬마는 좌우로 걷고 점프해서 떨어지는 블록을 피하고, 쌓인 블록을 밟고 올라간다
+// - 꼬마는 좌우로 걷고 점프해서 떨어지는 블록을 피하고, 쌓인 블록을 밟고 올라간다 (블록은 못 부숨)
+// - 블록은 나올 때 칸이 정해지고 그대로 곧게 떨어진다 (꼬마를 따라가지 않음)
 // - 맨 위 빨간 선에 머리가 닿으면 스테이지 클리어. 스테이지마다 블록이 빨리, 자주 떨어진다
 // - 테트리스처럼 한 줄이 꽉 차면 그 줄이 사라진다
 // - 공중에서 한 번 더 뛸 수 있다 (2단 점프)
-// - 점프하다 머리를 블록에 부딪치면 그 칸이 깨진다 (갇혀도 위로 뚫고 나올 수 있음)
 // - 빨간 선 위로 삐져나온 칸은 사라진다
 // - 떨어지는 블록에 맞으면 체력 -1 (3개)
 // - 기록은 도달한 스테이지
@@ -18,7 +18,6 @@ export interface ClimbHost {
   jump(): void;
   stageClear(): void;
   lineClear(n: number): void;
-  bump(): void;
   gameOver(): void;
 }
 
@@ -252,13 +251,8 @@ export class Climb {
         this.y = this.gridTop + Math.floor((r.bottom - this.gridTop) / CELL) * CELL - KID_H - 0.01;
         this.grounded = true;
         this.jumpsLeft = 2;
-      } else {             // 머리 부딪힘: 머리 위 칸(가운데 기준)을 깸
+      } else {             // 머리 부딪힘 (블록은 깨지지 않음)
         const row = Math.floor((r.top - this.gridTop) / CELL);
-        const col = Math.floor(r.centerX / CELL);
-        if (row >= 0 && row < this.rows && this.grid[row][col] >= 0) {
-          this.grid[row][col] = -1;
-          this.host.bump();
-        }
         this.y = this.gridTop + row * CELL + CELL + 0.01;
       }
       this.vy = 0;

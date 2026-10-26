@@ -221,7 +221,7 @@ function drawClimb(ctx: Ctx, game: Game, v: View): void {
     text(ctx, '다음 스테이지는 블록이 더 빨라요', World.Width / 2, my + 42, 16, '#dcdce6');
   } else if (c.stage === 1 && c.time < 3.5) {
     text(ctx, '블록을 피해 밟고 올라 빨간 선까지!', World.Width / 2, my, 19, WHITE, { bold: true });
-    text(ctx, '누른 쪽으로 걷고, 톡 치면 점프', World.Width / 2, my + 32, 15, '#dcdce6');
+    text(ctx, '◀ ▶ 로 걷고, 오른쪽 버튼으로 점프 (공중에서 한 번 더)', World.Width / 2, my + 32, 15, '#dcdce6');
   }
 }
 
@@ -761,11 +761,40 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    const hint = game.climb ? '누른 쪽으로 걷기 · 톡 치거나 위로 튕기면 점프'
+    const hint = game.climb ? ''
       : game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
       : game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';
     text(ctx, hint, l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
+  }
+
+  // 꼬마 오르기 버튼 (화면 픽셀): 왼쪽 아래 ◀ ▶, 오른쪽 아래 점프. 누르고 있으면 밝게
+  const cl = game.climb;
+  if (cl && game.state === 'playing' && v.overlay === 'none') {
+    const pad = (r: Rect, on: boolean) => {
+      roundRect(ctx, r, 16);
+      ctx.fillStyle = on ? 'rgba(255,230,90,0.55)' : 'rgba(20,22,34,0.55)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.stroke();
+    };
+    const arrow = (r: Rect, dir: number) => {
+      const s = r.w * 0.22, cx = r.centerX, cy = r.centerY;
+      ctx.fillStyle = WHITE;
+      ctx.beginPath();
+      ctx.moveTo(cx + dir * s, cy);
+      ctx.lineTo(cx - dir * s * 0.7, cy - s);
+      ctx.lineTo(cx - dir * s * 0.7, cy + s);
+      ctx.closePath();
+      ctx.fill();
+    };
+    pad(l.climbLeft, cl.keyDir < 0);
+    arrow(l.climbLeft, -1);
+    pad(l.climbRight, cl.keyDir > 0);
+    arrow(l.climbRight, 1);
+    pad(l.climbJump, !cl.grounded);
+    text(ctx, '점프', l.climbJump.centerX, l.climbJump.centerY + 1, 18, WHITE, { bold: true });
   }
 
   // 엘프 모드 조이스틱: 누른 곳에 큰 원, 끈 쪽에 작은 원 (화면 픽셀)

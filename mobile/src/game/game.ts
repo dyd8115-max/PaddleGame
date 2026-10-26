@@ -278,7 +278,6 @@ export class Game {
       jump: () => undefined,
       stageClear: () => { this.score_ += 100; this.events_.push('stageClear'); },
       lineClear: (n) => { this.score_ += 20 * n; this.events_.push('brickBreak'); },
-      bump: () => this.events_.push('brickBreak'),
       gameOver: () => this.endGame('gameover'),
     });
   }

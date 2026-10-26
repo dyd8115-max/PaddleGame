@@ -34,6 +34,9 @@ export interface Layout {
   touch: Rect;        // 아래쪽 조작 공간
   pauseBtn: Rect;
   soundBtn: Rect;
+  climbLeft: Rect;    // 꼬마 오르기 버튼: 왼쪽 아래 ◀ ▶, 오른쪽 아래 점프
+  climbRight: Rect;
+  climbJump: Rect;
 }
 
 export function makeLayout(w: number, h: number, dpr: number, insets: Insets): Layout {
@@ -52,7 +55,13 @@ export function makeLayout(w: number, h: number, dpr: number, insets: Insets): L
   const btn = 40;
   const by = hudTop + (HUD_H - btn) / 2;
   const left = insets.left + 10;
+  // 꼬마 오르기 버튼: 아래 조작 공간에 맞춰 크기를 정하고, 모자라면 게임 영역 아래쪽에 살짝 겹침
+  const cb = Math.max(56, Math.min(76, touch.h - 8));
+  const cy = h - insets.bottom - 6 - cb;
   return {
+    climbLeft: new Rect(insets.left + 12, cy, cb, cb),
+    climbRight: new Rect(insets.left + 12 + cb + 12, cy, cb, cb),
+    climbJump: new Rect(w - insets.right - 12 - cb * 1.25, cy, cb * 1.25, cb),
     w, h, dpr, insets, hudTop, scale, worldH, gx, gy, gw, gh, touch,
     pauseBtn: new Rect(left, by, btn, btn),
     soundBtn: new Rect(left + btn + 8, by, btn, btn),

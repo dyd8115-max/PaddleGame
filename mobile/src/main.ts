@@ -97,7 +97,8 @@ function pause(): void {
   if (game.state === 'playing' && overlay === 'none') overlay = 'pause';
   game.swipe?.aimCancel();
   game.archer?.joyEnd();
-  game.climb?.setTarget(null);
+  climbHeld.clear();
+  if (game.climb) game.climb.keyDir = 0;
 }
 
 function toggleMute(): void {
@@ -135,9 +136,33 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
 
 // ---------- 터치, 마우스 ----------
 let downX = 0, downY = 0, downAt = 0, activePointer = -1;
-let elfWalking = false;
-let flagTap = false;
-let climbJumped = false;  // 꼬마 오르기: 이번 손가락으로 이미 위로 튕겨 점프했는지      // 꼬마 지뢰 모드: 이번 손가락은 깃발 꽂기라 패들을 움직이지 않음   // 엘프 모드에서 지금 손가락이 자리 옮기기 중인지
+let elfWalking = false;   // 엘프 모드: 지금 손가락이 자리 옮기기 중인지
+let flagTap = false;      // 지뢰 모드: 이번 손가락은 깃발 꽂기라 패들을 움직이지 않음
+// 꼬마 오르기: 손가락마다 누르고 있는 버튼 (왼쪽·오른쪽을 누른 채 점프도 누를 수 있게)
+const climbHeld = new Map<number, 'left' | 'right' | 'jump'>();
+
+function climbDir(): number {
+  let d = 0;
+  for (const b of climbHeld.values()) d += b === 'left' ? -1 : b === 'right' ? 1 : 0;
+  return Math.sign(d);
+}
+
+// 꼬마 오르기 버튼: 누르면 true
+function climbPress(e: PointerEvent): boolean {
+  if (!(game.state === 'playing' && overlay === 'none' && game.climb)) return false;
+  const x = lx(e), y = ly(e);
+  const b = layout.climbLeft.contains(x, y) ? 'left' : layout.climbRight.contains(x, y) ? 'right' : layout.climbJump.contains(x, y) ? 'jump' : null;
+  if (!b) return false;
+  climbHeld.set(e.pointerId, b);
+  if (b === 'jump') game.climb.jump();
+  game.climb.keyDir = climbDir();
+  return true;
+}
+
+function climbRelease(e: PointerEvent): void {
+  if (!climbHeld.delete(e.pointerId)) return;
+  if (game.climb) game.climb.keyDir = climbDir();
+}
 
 function hudSoundRect() { return game.state === 'playing' ? layout.soundBtn : layout.pauseBtn; }
 
@@ -153,6 +178,7 @@ function archerActive(): boolean { return game.state === 'playing' && overlay ==
 
 canvas.addEventListener('pointerdown', (e) => {
   audio.unlock();   // 휴대폰은 첫 터치 뒤에야 소리를 낼 수 있음
+  if (climbPress(e)) return;
   if (activePointer !== -1 && e.pointerType === 'touch') return;   // 두 번째 손가락은 무시
   activePointer = e.pointerId;
   downX = lx(e); downY = ly(e); downAt = performance.now();
@@ -164,11 +190,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   flagTap = false;
-  climbJumped = false;
-  if (game.state === 'playing' && overlay === 'none' && game.climb) {
-    game.climb.setTarget(toWorld(layout, lx(e), ly(e)).x);   // 누른 쪽으로 걸어감
-    return;
-  }
+
   if (game.state === 'playing' && overlay === 'none' && game.mode === 'mine') {
     const p = toWorld(layout, lx(e), ly(e));
     if (game.toggleFlag(p.x, p.y)) { flagTap = true; return; }   // 벽돌을 누르면 깃발
@@ -203,13 +225,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   if (flagTap && e.pointerId === activePointer) return;
-  if (game.state === 'playing' && overlay === 'none' && game.climb) {
-    if (e.pointerId !== activePointer) return;
-    game.climb.setTarget(toWorld(layout, lx(e), ly(e)).x);
-    // 손가락을 위로 휙 올리면 점프
-    if (!climbJumped && downY - ly(e) > 40 && performance.now() - downAt < 350) { climbJumped = true; game.climb.jump(); }
-    return;
-  }
+
   if (swipeActive()) {
     if (e.pointerId === activePointer) {
       const p = toWorld(layout, lx(e), ly(e));
@@ -243,14 +259,10 @@ function onTap(x: number, y: number): void {
 }
 
 function endPointer(e: PointerEvent): void {
+  climbRelease(e);
   if (e.pointerId !== activePointer) return;
   activePointer = -1;
-  if (game.climb && game.state === 'playing') {
-    const moved = Math.hypot(lx(e) - downX, ly(e) - downY);
-    if (e.type === 'pointerup' && !climbJumped && moved < 14 && performance.now() - downAt < 300) game.climb.jump();   // 톡 치면 점프
-    game.climb.setTarget(null);
-    return;
-  }
+
   if (archerActive()) { game.archer!.joyEnd(); return; }
   if (swipeActive()) {
     if (e.type === 'pointerup') game.swipe!.aimRelease();
