@@ -24,8 +24,9 @@ let overlay: Overlay = 'none';
 let clock = 0;
 
 // ---------- 저장 ----------
-const KEY_BEST = (ch: number) => (ch === 1 ? 'best1r' : `best${ch}`);   // 캐릭터별 최고 기록 (엘프는 라운드)
-const KEY_ELF_SAVE = 'elfSave';   // 엘프 모드 중간 저장
+// 캐릭터별 최고 기록 (게임 방식이 바뀌면 키도 바꿔서 단위가 다른 옛 기록과 섞이지 않게)
+const KEY_BEST = (ch: number) => ['best0r', 'best1s', 'best2'][ch];
+const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(꼬마) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
 
@@ -82,7 +83,7 @@ const lx = (e: { clientX: number }) => e.clientX - rect.left;
 const ly = (e: { clientY: number }) => e.clientY - rect.top;
 
 // ---------- 동작 ----------
-// 엘프는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
+// 꼬마(스와이프)는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
 function start(fresh = false): void {
   if (game.state !== 'menu') return;
   const isElf = Characters.List[game.selected].mode === 'swipe';
@@ -95,6 +96,7 @@ function start(fresh = false): void {
 function pause(): void {
   if (game.state === 'playing' && overlay === 'none') overlay = 'pause';
   game.swipe?.aimCancel();
+  game.archer?.joyEnd();
 }
 
 function toggleMute(): void {
@@ -126,6 +128,8 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
   itemGood: 'start',
   itemBad: 'stomp',
   rowAdd: 'stomp',
+  hurt: 'stomp',
+  levelUp: 'start',
 };
 
 // ---------- 터치, 마우스 ----------
@@ -139,8 +143,10 @@ function movePaddle(x: number): void {
   game.setPaddleTarget(toWorld(layout, x, 0).x);
 }
 
-// 엘프 모드: 누른 채 당겨서 조준
+// 꼬마 모드: 누른 채 당겨서 조준
 function swipeActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.swipe !== null; }
+// 엘프 모드: 끌어서 이동, 레벨업 카드 고르기
+function archerActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.archer !== null; }
 
 canvas.addEventListener('pointerdown', (e) => {
   audio.unlock();   // 휴대폰은 첫 터치 뒤에야 소리를 낼 수 있음
@@ -154,8 +160,15 @@ canvas.addEventListener('pointerdown', (e) => {
     pause();
     return;
   }
+  if (archerActive()) {
+    const p = toWorld(layout, lx(e), ly(e));
+    const a = game.archer!;
+    if (a.choosing) a.pick(p.x, p.y);
+    else a.joyBegin(lx(e), ly(e));   // 조이스틱은 화면 픽셀 기준
+    return;
+  }
   if (swipeActive()) {
-    // 엘프: 아래 조작 공간은 걸어서 자리 옮기기, 그 위는 당겨서 조준
+    // 꼬마: 흰 바닥선 아래는 걸어서 자리 옮기기, 그 위는 당겨서 조준
     const p = toWorld(layout, lx(e), ly(e));
     elfWalking = p.y >= game.paddle.y + game.paddle.h;   // 흰 바닥선 아래는 걷기, 위는 조준
     if (elfWalking) game.setPaddleTarget(p.x);
@@ -172,6 +185,10 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   // 마우스는 누르지 않아도 따라오고, 터치는 누른 손가락만
   if (e.pointerType === 'touch' && e.pointerId !== activePointer) return;
+  if (archerActive()) {
+    if (e.pointerId === activePointer) game.archer!.joyMove(lx(e), ly(e));
+    return;
+  }
   if (swipeActive()) {
     if (e.pointerId === activePointer) {
       const p = toWorld(layout, lx(e), ly(e));
@@ -207,6 +224,7 @@ function onTap(x: number, y: number): void {
 function endPointer(e: PointerEvent): void {
   if (e.pointerId !== activePointer) return;
   activePointer = -1;
+  if (archerActive()) { game.archer!.joyEnd(); return; }
   if (swipeActive()) {
     if (e.type === 'pointerup') game.swipe!.aimRelease();
     else game.swipe!.aimCancel();
@@ -271,12 +289,12 @@ function frame(now: number): void {
     if (name === 'brick') lastBrickSound = clock;
     audio.play(name);
     if (e === 'gameOver') {
-      if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움
+      if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움 (꼬마)
       finishGame();
     }
   }
 
-  // 엘프: 새 라운드 조준 단계가 될 때마다 중간 저장
+  // 꼬마(스와이프): 새 라운드 조준 단계가 될 때마다 중간 저장
   const sw = game.swipe;
   if (sw && sw.phase === 'aim' && sw.round !== savedRound) {
     savedRound = sw.round;

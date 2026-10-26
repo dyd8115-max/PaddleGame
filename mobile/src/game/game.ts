@@ -4,6 +4,7 @@
 import { Rect, Vec2 } from './geometry';
 import { bounceOff, nudge } from './collide';
 import { Swipe, type SwipeSave } from './swipe';
+import { Archer } from './archer';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -12,7 +13,8 @@ import {
 export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
 export type GameEvent =
-  'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'brickHit' | 'devilStomp' | 'itemGood' | 'itemBad' | 'pickup' | 'rowAdd';
+  'start' | 'stageClear' | 'gameOver' | 'brickBreak' | 'brickHit' | 'devilStomp' | 'itemGood' | 'itemBad' | 'pickup' | 'rowAdd'
+  | 'hurt' | 'levelUp';
 
 const BALL_SPEED = 540;     // 1스테이지 공 빠르기 (픽셀/초)
 const SPEED_STEP = 1.3;     // 스테이지마다 1.3배씩 빨라짐
@@ -104,7 +106,8 @@ export class Game {
   items: Item[] = [];   // 떨어지는 아이템
   bricks: Brick[] = [];
   walls: Rect[] = [];   // 회색 벽 (깨지지 않음)
-  swipe: Swipe | null = null;   // 엘프 모드일 때만
+  swipe: Swipe | null = null;   // 꼬마 모드일 때만
+  archer: Archer | null = null; // 엘프 모드일 때만
   private events_: GameEvent[] = [];
 
   constructor() {
@@ -123,8 +126,9 @@ export class Game {
   get lastRecord(): number { return this.lastRecord_; }
   get survivalTime(): number { return this.survivalTime_; }
   get dangerY(): number { return this.paddle.y - DANGER_ABOVE_PADDLE; }
-  // 지금 판의 기록: 꼬마는 스테이지, 엘프는 라운드, 성녀는 버틴 초
+  // 지금 판의 기록: 꼬마는 라운드, 엘프는 스테이지, 성녀는 버틴 초
   get record(): number {
+    if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
     if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
     if (this.mode === 'survival') return Math.floor(this.survivalTime_ * 10) / 10;
     return this.stage_;
@@ -218,7 +222,9 @@ export class Game {
 
     this.pickBackground();   // 게임마다 배경을 무작위로
     this.swipe = null;
+    this.archer = null;
     if (ch.mode === 'swipe') this.startSwipe(save);
+    else if (ch.mode === 'archer') this.startArcher();
     else if (ch.mode === 'survival') this.startSurvival();
     else this.startStage(true);
     this.state_ = 'playing';
@@ -246,6 +252,27 @@ export class Game {
     this.paddle.targetX = this.swipe.launchX;
     this.updatePaddle();
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
+  }
+
+  // 엘프 모드: 궁수
+  private startArcher(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.archer = new Archer({
+      brickHit: (broken) => {
+        this.events_.push(broken ? 'brickBreak' : 'brickHit');
+        if (broken) this.score_ += 10;
+      },
+      hurt: () => this.events_.push('hurt'),
+      levelUp: () => this.events_.push('levelUp'),
+      stageClear: () => this.events_.push('stageClear'),
+      bossStomp: () => this.events_.push('devilStomp'),
+      gameOver: () => this.endGame('gameover'),
+    });
   }
 
   // 성녀 모드: 회색 벽 없이, 몇 줄 깔고 시작. 3초마다 위에서 새 줄
@@ -301,8 +328,23 @@ export class Game {
       return;
     }
 
+    if (this.archer) {
+      const a = this.archer;
+      a.update(dt);
+      if (this.archer) {
+        this.stage_ = a.stage;
+        // 캐릭터 그림: 움직이면 걷기, 방향 따라 좌우
+        const p = this.player;
+        if (a.vx !== 0) p.facingLeft = a.vx < 0;
+        const was = p.walking;
+        p.walking = a.moving;
+        if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;
+      }
+      return;
+    }
+
     if (this.swipe) {
-      // 엘프: 조준 단계에서만 걸어서 쏠 자리를 옮긴다
+      // 꼬마: 조준 단계에서만 걸어서 쏠 자리를 옮긴다
       if (this.swipe.phase === 'aim') {
         this.updatePaddle();
         this.swipe.launchX = this.paddle.bounds().centerX;
@@ -716,6 +758,7 @@ export class Game {
     this.balls = [];
     this.items = [];
     this.swipe = null;
+    this.archer = null;
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');

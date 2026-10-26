@@ -12,10 +12,11 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 export const PLAYER_SCALE = 1.5;
 
 // 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
-// stage:    패들로 받아 벽돌을 깨고 다음 맵으로. 회색 블록이 무작위로 생김. 몇 스테이지까지 갔나 (꼬마)
-// swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (엘프)
+// swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (꼬마)
+// archer:   궁수의 전설처럼 움직이다 멈추면 자동 발사, 스킬 고르기. 몇 스테이지까지 갔나 (엘프)
 // survival: 3초마다 벽돌 줄이 위에서 생겨 내려온다. 몇 초 버텼나 (성녀)
-export type GameMode = 'stage' | 'swipe' | 'survival';
+// stage:    패들로 받아 벽돌을 깨고 다음 맵으로 (지금은 쓰지 않음)
+export type GameMode = 'stage' | 'swipe' | 'archer' | 'survival';
 
 export interface CharacterDef {
   name: string;
@@ -33,14 +34,14 @@ export const Characters = {
   CellH: 80,
   List: [
     {
-      name: 'KID', fps: 15, mode: 'stage', speedMul: 1, paddleW: 80,
-      ability: '회색 블록 피하기 · 몇 스테이지까지 갈까',
-      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '스테이지마다 깨지지 않는 회색 블록이 최대 7개'],
-    },
-    {
-      name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,
+      name: 'KID', fps: 15, mode: 'swipe', speedMul: 1, paddleW: 80,
       ability: '스와이프 벽돌깨기 · 몇 라운드까지 갈까',
       hints: ['흰 선 아래를 밀어 자리 고르고, 위를 당겨 조준', '숫자만큼 맞히면 깨져요. 바닥선에 닿으면 끝'],
+    },
+    {
+      name: 'ELF', fps: 13, mode: 'archer', speedMul: 1, paddleW: 80,
+      ability: '궁수 · 멈추면 자동 발사, 몇 스테이지까지',
+      hints: ['화면을 끌어 움직이고, 멈추면 화살을 자동으로 쏴요', '레벨이 오르면 스킬을 하나 골라요'],
     },
     {
       name: 'SAINT', fps: 16, mode: 'survival', speedMul: 1.5, paddleW: 80,

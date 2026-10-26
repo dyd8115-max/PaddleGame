@@ -2,7 +2,10 @@
 import { images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
-import { Characters, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
+import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
+import { SKILLS } from './game/archer';
+
+const ARROW_SPEED_DRAW = 720;   // 화살 꼬리 길이 계산용 (archer.ts 의 화살 빠르기)
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
 import { UI, type Overlay } from './ui';
 
@@ -99,8 +102,11 @@ function drawCharacter(ctx: Ctx, character: number, frame: number, facingLeft: b
 function drawDevil(ctx: Ctx, game: Game): void {
   const d = game.devil;
   if (!d.active) return;
+  drawDevilSprite(ctx, d, d.airborne ? 0 : game.stompDip());   // 밟고 있으면 패들과 같이 눌림
+}
+
+function drawDevilSprite(ctx: Ctx, d: Devil, dip: number): void {
   const b = d.bounds();
-  const dip = d.airborne ? 0 : game.stompDip();   // 밟고 있으면 패들과 같이 눌림
   const img = images.devil;
   if (!img) {
     ctx.fillStyle = '#781e28';
@@ -148,6 +154,7 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
 // 기록 글자: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 시간
 function formatRecord(mode: GameMode, v: number): string {
   if (mode === 'swipe') return `ROUND ${v}`;
+  if (mode === 'archer') return `STAGE ${v}`;
   if (mode === 'survival') {
     if (v < 60) return `${v.toFixed(1)}초`;
     return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
@@ -156,6 +163,132 @@ function formatRecord(mode: GameMode, v: number): string {
 }
 
 // ---------- 게임 영역 (논리 좌표) ----------
+// ---------- 엘프 궁수 모드 ----------
+function drawArcher(ctx: Ctx, game: Game, v: View): void {
+  const a = game.archer!;
+
+  // 엘프 구역 경계: 벽돌이 여기 닿으면 체력 -1
+  ctx.save();
+  ctx.setLineDash([10, 8]);
+  ctx.strokeStyle = 'rgba(255,90,90,0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, a.zoneTop);
+  ctx.lineTo(World.Width, a.zoneTop);
+  ctx.stroke();
+  ctx.restore();
+
+  const maxHp = a.bricks.reduce((m, k) => Math.max(m, k.maxHp), 1);
+  for (const k of a.bricks) {
+    const t = Math.max(0, Math.min(1, (a.time - k.appearAt) / 0.16));
+    if (t <= 0) continue;
+    const r = a.brickRect(k);
+    const s = 0.6 + 0.4 * t;
+    const rr = new Rect(r.centerX - r.w * s / 2, r.centerY - r.h * s / 2, r.w * s, r.h * s);
+    roundRect(ctx, rr, 6);
+    ctx.fillStyle = k.shooter ? '#7a3cc8' : hpColor(k.hp, maxHp);
+    ctx.fill();
+    if (k.shooter) {   // 쏘는 벽돌: 보라색에 눈
+      ctx.fillStyle = '#ffe65a';
+      ctx.beginPath();
+      ctx.arc(rr.x + 10, rr.centerY, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    text(ctx, String(k.hp), rr.centerX, rr.centerY + 1, 16, k.shooter ? WHITE : '#1e2232', { bold: true });
+  }
+
+  if (a.boss) {
+    drawDevilSprite(ctx, a.boss, 0);
+    const br = a.bossRect()!;
+    const w = 120, x = br.centerX - w / 2, y = br.y - 14;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(x - 1, y - 1, w + 2, 8);
+    ctx.fillStyle = '#ff4d4d';
+    ctx.fillRect(x, y, w * Math.max(0, a.bossHp / a.bossMaxHp), 6);
+  }
+
+  // 화살
+  ctx.strokeStyle = '#fff3b0';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  for (const ar of a.arrows) {
+    const len = 14 / ARROW_SPEED_DRAW;
+    ctx.beginPath();
+    ctx.moveTo(ar.pos.x, ar.pos.y);
+    ctx.lineTo(ar.pos.x - ar.vel.x * len, ar.pos.y - ar.vel.y * len);
+    ctx.stroke();
+  }
+
+  // 적 탄
+  for (const b of a.bullets) {
+    ctx.beginPath();
+    ctx.arc(b.pos.x, b.pos.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff5a5a';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#2a0a0a';
+    ctx.stroke();
+  }
+
+  // 엘프 (맞은 직후에는 깜빡임)
+  const p = game.player;
+  if (a.invuln <= 0 || Math.floor(v.time * 12) % 2 === 0) {
+    drawCharacter(ctx, p.character, p.frame(), p.facingLeft, a.elfRect());
+  }
+
+  // 경험치 막대 (맨 위)
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0, 0, World.Width, 6);
+  ctx.fillStyle = '#4ddc7a';
+  ctx.fillRect(0, 0, World.Width * Math.min(1, a.xp / a.xpNeed), 6);
+
+  const my = World.Height * 0.4;
+  if (a.clearTimer > 0) {
+    text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
+    text(ctx, (a.stage + 1) % 5 === 0 ? '다음은 악마 보스!' : '체력 1 회복', World.Width / 2, my + 42, 16, '#dcdce6');
+  } else if (a.stage === 1 && a.time < 3) {
+    text(ctx, '끌어서 움직이고, 멈추면 자동 발사!', World.Width / 2, World.Height * 0.62, 18, WHITE, { bold: true });
+  } else if (a.boss && a.time < 2) {
+    text(ctx, '악마 보스!', World.Width / 2, World.Height * 0.62, 28, '#ff9a9a', { bold: true });
+  }
+
+  // 레벨업: 스킬 카드 3장
+  if (a.choosing) {
+    ctx.fillStyle = 'rgba(8,10,16,0.75)';
+    ctx.fillRect(0, 0, World.Width, World.Height);
+    text(ctx, `레벨 업! Lv ${a.level}`, World.Width / 2, World.Height * 0.32 - 50, 28, ITEM_COLOR, { bold: true });
+    text(ctx, '스킬을 하나 고르세요', World.Width / 2, World.Height * 0.32 - 18, 15, '#dcdce6');
+    a.choosing.forEach((id, i) => {
+      const r = a.cardRect(i);
+      const info = SKILLS[id];
+      const lv = a.skills[id] ?? 0;
+      roundRect(ctx, r, 12);
+      ctx.fillStyle = CARD_SEL;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = ITEM_COLOR;
+      ctx.stroke();
+      text(ctx, info.name, r.centerX, r.y + 40, 16, WHITE, { bold: true });
+      wrapText(ctx, info.desc, r.centerX, r.y + 80, r.w - 16, 13, '#dcdce6');
+      if (id !== 'heal') text(ctx, `${lv} → ${lv + 1}`, r.centerX, r.bottom - 22, 14, ITEM_COLOR, { bold: true });
+    });
+  }
+}
+
+// 짧은 설명을 칸 너비에 맞춰 줄바꿈 (공백 기준)
+function wrapText(ctx: Ctx, s: string, cx: number, y: number, maxW: number, size: number, color: string): void {
+  ctx.font = `${size}px ${FONT}`;
+  const words = s.split(' ');
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const t = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  lines.forEach((ln, i) => text(ctx, ln, cx, y + i * (size + 5), size, color));
+}
+
 // 엘프 모드 벽돌 색: 화면에서 숫자가 클수록 초록 → 노랑 → 빨강
 function hpColor(hp: number, maxHp: number): string {
   const t = maxHp <= 1 ? 0 : Math.min(1, (hp - 1) / (maxHp - 1));
@@ -238,6 +371,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
 }
 
 function drawPlaying(ctx: Ctx, game: Game, v: View): void {
+  if (game.archer) { drawArcher(ctx, game, v); return; }
   if (game.swipe) { drawSwipe(ctx, game, v); return; }
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
@@ -453,7 +587,10 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const mode = game.mode;
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
-    const sub = sw ? `공 ${sw.ballCount}개` : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
+    const ar = game.archer;
+    const sub = sw ? `공 ${sw.ballCount}개`
+      : ar ? `Lv ${ar.level} · 체력 ${Math.max(0, ar.hp)}/${ar.maxHp}`
+      : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, l.hudTop, Math.max(0, maxW), HUD_H);
@@ -501,8 +638,28 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    text(ctx, game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶', l.w / 2, y, 14, WHITE);
+    const hint = game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
+      : game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';
+    text(ctx, hint, l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
+  }
+
+  // 엘프 모드 조이스틱: 누른 곳에 큰 원, 끈 쪽에 작은 원 (화면 픽셀)
+  const ja = game.archer;
+  if (ja && ja.joyFrom && v.overlay === 'none' && !ja.choosing) {
+    const f = ja.joyFrom, t = ja.joyTo;
+    const dx = t.x - f.x, dy = t.y - f.y, len = Math.hypot(dx, dy), k = len > 44 ? 44 / len : 1;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 44, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(f.x + dx * k, f.y + dy * k, 18, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fill();
   }
 
   drawHud(ctx, l, game, v);
