@@ -198,8 +198,14 @@ function drawArcher(ctx: Ctx, game: Game, v: View): void {
   }
 
   if (a.boss) {
-    drawDevilSprite(ctx, a.boss, 0);
     const br = a.bossRect()!;
+    roundRect(ctx, br, 10);
+    ctx.fillStyle = '#8a1c2b';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffb0b0';
+    ctx.stroke();
+    text(ctx, String(Math.max(0, a.bossHp)), br.centerX, br.centerY + 1, 24, WHITE, { bold: true });
     const w = 120, x = br.centerX - w / 2, y = br.y - 14;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(x - 1, y - 1, w + 2, 8);
@@ -245,11 +251,11 @@ function drawArcher(ctx: Ctx, game: Game, v: View): void {
   const my = World.Height * 0.4;
   if (a.clearTimer > 0) {
     text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
-    text(ctx, (a.stage + 1) % 5 === 0 ? '다음은 악마 보스!' : '체력 1 회복', World.Width / 2, my + 42, 16, '#dcdce6');
+    text(ctx, (a.stage + 1) % 5 === 0 ? '다음은 보스!' : '체력 1 회복', World.Width / 2, my + 42, 16, '#dcdce6');
   } else if (a.stage === 1 && a.time < 3) {
     text(ctx, '끌어서 움직이고, 멈추면 자동 발사!', World.Width / 2, World.Height * 0.62, 18, WHITE, { bold: true });
   } else if (a.boss && a.time < 2) {
-    text(ctx, '악마 보스!', World.Width / 2, World.Height * 0.62, 28, '#ff9a9a', { bold: true });
+    text(ctx, '보스 등장!', World.Width / 2, World.Height * 0.62, 28, '#ff9a9a', { bold: true });
   }
 
   // 레벨업: 스킬 카드 3장
@@ -360,9 +366,6 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
     text(ctx, `×${n}`, tx, lp.y - 17, 15, WHITE, { bold: true });
   }
 
-  if (s.round === 2 && s.phase === 'aim' && !s.aiming && game.devil.active) {
-    text(ctx, '악마가 나타나 벽돌을 가려요!', World.Width / 2, World.Height * 0.55, 20, '#ff9a9a', { bold: true });
-  }
   if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
     const my = World.Height * 0.55;
     text(ctx, '위쪽을 누른 채 아래로 당겨 조준', World.Width / 2, my, 20, WHITE, { bold: true });

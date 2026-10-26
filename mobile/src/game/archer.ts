@@ -2,12 +2,12 @@
 //
 // - 화면 어디든 누른 채 끌면 엘프가 그 방향으로 움직인다 (화면 아래쪽 절반 안에서 자유 이동)
 // - 멈춰 있으면 가장 가까운 적에게 화살을 자동으로 쏜다. 움직이는 동안은 쏘지 않는다
-// - 적: 숫자(체력)가 있는 벽돌이 천천히 내려오고, 일부 벽돌은 엘프에게 탄을 쏜다. 5스테이지마다 악마 보스
+// - 적: 숫자(체력)가 있는 벽돌이 천천히 내려오고, 일부 벽돌은 엘프에게 탄을 쏜다. 5스테이지마다 큰 벽돌 보스
 // - 적을 모두 잡으면 다음 스테이지. 벽돌이 엘프 구역에 닿거나 탄에 맞으면 체력이 줄고, 0 이 되면 끝
 // - 벽돌을 깨면 경험치. 레벨이 오르면 스킬 3개 중 하나를 고른다
 // - 기록은 도달한 스테이지
 import { Rect, Vec2 } from './geometry';
-import { Characters, Devil, DevilSprite, World } from './objects';
+import { Characters, World } from './objects';
 
 export interface ArcherHost {
   brickHit(broken: boolean): void;
@@ -43,6 +43,8 @@ const BULLET_R = 5;
 const HURT_INVULN = 1.0;      // 맞은 뒤 무적 시간
 const START_HP = 5;
 const CLEAR_PAUSE = 1.3;      // 스테이지 클리어 뒤 다음 스테이지까지
+const BOSS_W = 140;
+const BOSS_H = 64;
 
 const randInt = (n: number) => Math.floor(Math.random() * n);
 
@@ -90,7 +92,7 @@ export class Archer {
   invuln = 0;
 
   bricks: ArcherBrick[] = [];
-  boss: Devil | null = null;
+  boss: { x: number; y: number; vx: number } | null = null;   // 큰 벽돌 보스 (왼쪽 위)
   bossHp = 0;
   bossMaxHp = 0;
   arrows: Arrow[] = [];
@@ -107,7 +109,7 @@ export class Archer {
   private multiTimer = 0;
   private multiDir = new Vec2(0, -1);
   private bossFire = 2;
-  private bossJumpTimer = 2;
+  private bossBurst = 3;
 
   constructor(private host: ArcherHost) {
     this.y = this.zoneBottom - 10;
@@ -124,12 +126,10 @@ export class Archer {
     return new Rect(SIDE + k.col * (CELL_W + GAP), k.y, CELL_W, CELL_H);
   }
 
-  // 보스 몸통 판정 (악마 그림의 몸통 부분)
+  // 큰 벽돌 보스 판정
   bossRect(): Rect | null {
-    const d = this.boss;
-    if (!d) return null;
-    const s = d.scale;
-    return new Rect(d.x + 36 * s, d.y + 40 * s, 46 * s, 88 * s);
+    const b = this.boss;
+    return b ? new Rect(b.x, b.y, BOSS_W, BOSS_H) : null;
   }
 
   elfRect(): Rect { return new Rect(this.x - ELF_W / 2, this.y - ELF_H / 2, ELF_W, ELF_H); }
@@ -153,18 +153,10 @@ export class Archer {
       this.bricks.push(k);
     });
     if (bossStage) {
-      const d = new Devil();
-      d.active = true;
-      d.scale = 1.8;
-      d.bodyX = World.Width / 2;
-      d.baseY = TOP + ROW_H * 2 + DevilSprite.Cell * d.scale * 0.55;
-      d.walkVel = Math.random() < 0.5 ? 50 : -50;
-      d.jumpSpeed = 380;
-      this.boss = d;
+      this.boss = { x: (World.Width - BOSS_W) / 2, y: TOP + ROW_H * 2, vx: Math.random() < 0.5 ? 60 : -60 };
       this.bossMaxHp = this.bossHp = 25 + n * 8;
       this.bossFire = 2;
-      this.bossJumpTimer = 2.5;
-      this.placeBoss();
+      this.bossBurst = 3;
     }
   }
 
@@ -278,45 +270,23 @@ export class Archer {
     this.bullets.push({ pos: from, vel: new Vec2(Math.cos(a) * speed, Math.sin(a) * speed) });
   }
 
-  private placeBoss(): void {
-    const d = this.boss!;
-    d.x = d.bodyX - (d.facingLeft ? 69 : 59) * d.scale;
-    d.y = d.baseY - DevilSprite.Cell * d.scale - d.lift;
-  }
-
+  // 큰 벽돌 보스: 좌우로 움직이며 쏘고, 가끔 다섯 갈래로 퍼뜨린다
   private updateBoss(dt: number): void {
-    const d = this.boss;
-    if (!d) return;
-    d.animTime += dt;
-    d.bodyX += d.walkVel * dt;
-    const edge = 40 * d.scale;
-    if (d.bodyX > World.Width - edge) { d.bodyX = World.Width - edge; d.walkVel = -Math.abs(d.walkVel); }
-    if (d.bodyX < edge) { d.bodyX = edge; d.walkVel = Math.abs(d.walkVel); }
-    d.facingLeft = d.walkVel < 0;
-    this.bossJumpTimer -= dt;
-    if (!d.airborne && this.bossJumpTimer <= 0) {
-      d.airborne = true;
-      d.jumpKind = randInt(DevilSprite.JumpKinds);
-      d.liftVel = d.jumpSpeed;
-      this.bossJumpTimer = 3 + Math.random() * 2;
-    }
-    if (d.airborne) {
-      d.liftVel -= 1000 * dt;
-      d.lift += d.liftVel * dt;
-      if (d.lift <= 0) {   // 쿵 착지하며 사방으로 탄
-        d.lift = 0; d.liftVel = 0; d.airborne = false;
-        this.host.bossStomp();
-        const r = this.bossRect()!;
-        for (let i = -2; i <= 2; i++) this.fireAt(new Vec2(r.centerX, r.bottom - 10), i * 0.28);
-      }
-    }
+    const b = this.boss;
+    if (!b) return;
+    b.x += b.vx * dt;
+    if (b.x < 4) { b.x = 4; b.vx = Math.abs(b.vx); }
+    if (b.x + BOSS_W > World.Width - 4) { b.x = World.Width - 4 - BOSS_W; b.vx = -Math.abs(b.vx); }
+    const r = this.bossRect()!;
+    const from = new Vec2(r.centerX, r.bottom);
     this.bossFire -= dt;
-    if (this.bossFire <= 0) {
-      this.bossFire = 1.6;
-      const r = this.bossRect()!;
-      this.fireAt(new Vec2(r.centerX, r.bottom - 10), 0);
+    if (this.bossFire <= 0) { this.bossFire = 1.6; this.fireAt(from, 0); }
+    this.bossBurst -= dt;
+    if (this.bossBurst <= 0) {
+      this.bossBurst = 3.5 + Math.random();
+      this.host.bossStomp();
+      for (let i = -2; i <= 2; i++) this.fireAt(from, i * 0.28);
     }
-    this.placeBoss();
   }
 
   // 멈춰 있으면 가장 가까운 적에게 자동 발사

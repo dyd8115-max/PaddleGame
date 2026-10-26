@@ -119,13 +119,6 @@ export class Swipe {
     return new Vec2(r.centerX, r.centerY);
   }
 
-  // 벽돌 맨 아랫줄의 아래 끝 (벽돌이 없으면 맨 윗줄 위치)
-  get lowestBrickBottom(): number {
-    let y = TOP;
-    for (const k of this.bricks) y = Math.max(y, this.cellRect(k.col, k.row).bottom);
-    return y;
-  }
-
   get launchPos(): Vec2 { return new Vec2(this.launchX, this.host.floorY() - BALL_SIZE / 2); }
 
   // 이 줄까지 내려오면 끝 (바닥에서 공 두 개 높이 위)

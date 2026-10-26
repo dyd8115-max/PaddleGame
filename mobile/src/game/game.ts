@@ -44,14 +44,6 @@ const BALL_SIZE = 10;
 const MAX_DT = 1 / 30;
 const WALL_FADE = 0.25;     // 회색 벽이 나타나는 시간
 
-// 엘프: 2라운드부터 악마가 화면 위쪽 벽돌 위를 걸어다니며 벽돌을 가린다 (공과는 부딪치지 않음)
-const ELF_DEVIL_FROM_ROUND = 2;
-const ELF_DEVIL_WALK = 55;        // 걷는 빠르기
-const ELF_DEVIL_JUMP_EVERY = 2.4;
-const ELF_DEVIL_FEET_MIN = 56 + 44 * 3;   // 발 높이: 적어도 벽돌 세 줄을 가리는 곳
-const ELF_DEVIL_FEET_MAX_RATIO = 0.55;    // 화면 위쪽 절반쯤 안에서만
-const ELF_DEVIL_SCALE = 2;                // 2배 크기로 그려서 벽돌 2칸, 4줄쯤 가림
-
 // 성녀 버티기
 const ROW_EVERY = 3;        // 이 시간(초)마다 위에서 벽돌 줄이 하나 생기고 전체가 한 줄 내려옴
 const START_ROWS = 3;       // 처음에 깔려 있는 줄 수
@@ -353,7 +345,6 @@ export class Game {
       this.swipe.update(dt);
       if (this.swipe) {
         this.stage_ = this.swipe.round;
-        this.updateElfDevil(dt);
       }
       return;
     }
@@ -395,56 +386,6 @@ export class Game {
       this.startStage(true);
       this.events_.push('stageClear');
     }
-  }
-
-  // 엘프 모드 악마: 벽돌 맨 아랫줄에 발을 걸치고 좌우로 걸으며, 가끔 뛰어올라 윗줄까지 가린다
-  private updateElfDevil(dt: number): void {
-    const d = this.devil;
-    const s = this.swipe!;
-    const target = Math.max(ELF_DEVIL_FEET_MIN, Math.min(World.Height * ELF_DEVIL_FEET_MAX_RATIO, s.lowestBrickBottom + 8));
-    if (!d.active) {
-      if (s.round < ELF_DEVIL_FROM_ROUND) return;
-      d.active = true;
-      d.scale = ELF_DEVIL_SCALE;
-      d.bodyX = 80 + Math.random() * 320;
-      d.baseY = target;
-      d.walkVel = Math.random() < 0.5 ? ELF_DEVIL_WALK : -ELF_DEVIL_WALK;
-      d.airborne = true;          // 위에서 뚝 떨어지며 등장
-      d.dropping = true;
-      d.lift = target + DevilSprite.Cell * d.scale;
-      d.liftVel = 0;
-      d.jumpSpeed = DEVIL_JUMP_SPEED;
-      d.jumpKind = randInt(DevilSprite.JumpKinds);
-      d.jumpTimer = ELF_DEVIL_JUMP_EVERY;
-    }
-    d.animTime += dt;
-    d.bodyX += d.walkVel * dt;
-    const edge = 35 * d.scale;
-    if (d.bodyX > World.Width - edge) { d.bodyX = World.Width - edge; d.walkVel = -Math.abs(d.walkVel); }
-    if (d.bodyX < edge) { d.bodyX = edge; d.walkVel = Math.abs(d.walkVel); }
-    d.facingLeft = d.walkVel < 0;
-    d.baseY += (target - d.baseY) * Math.min(1, dt * 3);   // 벽돌이 내려오면 따라 내려옴
-
-    if (!d.dropping) d.jumpTimer -= dt;
-    if (!d.airborne && d.jumpTimer <= 0) {
-      d.airborne = true;
-      d.jumpKind = randInt(DevilSprite.JumpKinds);
-      d.jumpSpeed = DEVIL_JUMP_SPEED;
-      d.liftVel = DEVIL_JUMP_SPEED;
-      d.jumpTimer += ELF_DEVIL_JUMP_EVERY;
-    }
-    if (d.airborne) {
-      d.liftVel -= DEVIL_GRAVITY * dt;
-      d.lift += d.liftVel * dt;
-      if (d.lift <= 0) {
-        d.lift = 0;
-        d.liftVel = 0;
-        d.airborne = false;
-        d.dropping = false;
-      }
-    }
-    d.x = d.bodyX - (d.facingLeft ? 69 : 59) * d.scale;
-    d.y = d.baseY - DevilSprite.Cell * d.scale - d.lift;
   }
 
   // 성녀: 시간 재기, 3초마다 새 줄, 선에 닿으면 끝
