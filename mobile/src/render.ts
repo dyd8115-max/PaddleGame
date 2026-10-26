@@ -416,7 +416,7 @@ function hpColor(hp: number, maxHp: number): string {
   return `hsl(${Math.round(135 - t * 135)}, 62%, 56%)`;
 }
 
-function drawSwipe(ctx: Ctx, game: Game, v: View): void {
+function drawSwipe(ctx: Ctx, game: Game): void {
   const s = game.swipe!;
   const floor = game.paddle.y + game.paddle.h;
 
@@ -433,19 +433,15 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
     roundRect(ctx, r, 6);
     ctx.fillStyle = hpColor(k.hp, maxHp);
     ctx.fill();
-    text(ctx, String(k.hp), r.centerX, r.centerY + 1, k.hp >= 100 ? 15 : 18, '#1e2232', { bold: true });
-  }
-
-  // +1: 초록 고리. 살짝 숨쉬듯
-  const pulse = 1 + 0.08 * Math.sin(v.time * 5);
-  for (const pk of s.pickups) {
-    const r = s.drawRect(pk.col, pk.row);
-    ctx.beginPath();
-    ctx.arc(r.centerX, r.centerY, 13 * pulse, 0, Math.PI * 2);
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#4ddc7a';
-    ctx.stroke();
-    text(ctx, '+1', r.centerX, r.centerY + 1, 12, '#4ddc7a', { bold: true });
+    if (k.bonus) {   // +1 벽돌: 초록 테두리와 작은 +1
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#4ddc7a';
+      ctx.stroke();
+      ctx.fillStyle = '#1e7a3e';
+      ctx.fillRect(r.right - 20, r.y + 2, 18, 13);
+      text(ctx, '+1', r.right - 11, r.y + 9, 10, WHITE, { bold: true });
+    }
+    text(ctx, String(k.hp), r.centerX, r.centerY + 2, k.hp >= 100 ? 15 : 18, '#1e2232', { bold: true });
   }
 
   for (const b of s.balls) outlinedRect(ctx, b.bounds(), WHITE);
@@ -491,7 +487,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
 function drawPlaying(ctx: Ctx, game: Game, v: View): void {
   if (game.climb) { drawClimb(ctx, game, v); return; }
   if (game.archer) { drawArcher(ctx, game, v); return; }
-  if (game.swipe) { drawSwipe(ctx, game, v); return; }
+  if (game.swipe) { drawSwipe(ctx, game); return; }
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 

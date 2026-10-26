@@ -2,7 +2,7 @@
 //
 // - 아래쪽을 밀면 엘프가 걸어가 쏠 자리를 고르고, 위쪽을 누른 채 아래로 당기면 반대쪽으로 조준선이 보인다
 // - 손을 떼면 가진 공을 차례로 쏜다. 기록은 도달한 라운드. 조준 단계마다 중간 저장
-// - 벽돌의 숫자만큼 맞혀야 깨진다. 초록 동그라미(+1, 라운드마다 하나)를 지나가면 다음 차례부터 공이 하나 늘어난다
+// - 벽돌의 숫자만큼 맞혀야 깨진다. 라운드마다 새 줄 벽돌 하나가 '+1 벽돌'이고, 깨면 다음 차례부터 공이 하나 늘어난다
 // - 공이 모두 바닥에 돌아오면 새 벽돌 줄이 1~3줄(50%, 30%, 20%) 생기면서 한꺼번에 내려온다. 바닥선에 닿으면 끝
 // - 공 빠르기는 라운드와 상관없이 일정하다 (한 차례가 오래 걸리면 빨라지기만 함)
 import { Rect, Vec2 } from './geometry';
@@ -26,7 +26,6 @@ const TOP = 56;               // 맨 윗줄 위치
 const CELL_H = 40;
 const ROW_H = CELL_H + GAP;
 export const CELL_W = (World.Width - SIDE * 2 - GAP * (COLS - 1)) / COLS;
-const PICK_R = 13;            // +1 동그라미 반지름
 
 const BALL_SIZE = 10;
 const SPEED = 780;            // 공 빠르기 (픽셀/초). 라운드가 올라가도 그대로
@@ -41,11 +40,7 @@ const NUDGE_AFTER = 6;        // 벽돌을 못 맞히고 벽만 튕기는 시간
 const randInt = (n: number) => Math.floor(Math.random() * n);
 
 export class SwipeBrick {
-  constructor(public col: number, public row: number, public hp: number) {}
-}
-
-export class Pickup {
-  constructor(public col: number, public row: number) {}
+  constructor(public col: number, public row: number, public hp: number, public bonus = false) {}   // bonus: 깨면 공 +1
 }
 
 // 중간 저장: 조준 단계의 판 상태
@@ -54,8 +49,8 @@ export interface SwipeSave {
   ballCount: number;
   launchX: number;
   rowCount: number;
-  bricks: [number, number, number][];   // 칸, 줄, 숫자
-  pickups: [number, number][];          // 칸, 줄
+  bricks: [number, number, number, number?][];   // 칸, 줄, 숫자, +1 벽돌이면 1
+  pickups?: [number, number][];         // 예전 저장 형식 (공중의 +1). 지금은 쓰지 않음
 }
 
 export class Swipe {
@@ -66,7 +61,6 @@ export class Swipe {
   rowCount = 0;              // 지금까지 만든 줄 수
   newRows = 1;               // 이번에 새로 생긴 줄 수 (내려오는 그림용)
   bricks: SwipeBrick[] = [];
-  pickups: Pickup[] = [];
   balls: Ball[] = [];        // 날아가는 공
   toLaunch = 0;              // 아직 안 쏜 공 수
   collected = 0;             // 이번 차례에 먹은 +1
@@ -86,8 +80,7 @@ export class Swipe {
       this.ballCount = save.ballCount;
       this.launchX = save.launchX;
       this.rowCount = save.rowCount;
-      this.bricks = save.bricks.map(([c, r, hp]) => new SwipeBrick(c, r, hp));
-      this.pickups = save.pickups.map(([c, r]) => new Pickup(c, r));
+      this.bricks = save.bricks.map(([c, r, hp, b]) => new SwipeBrick(c, r, hp, b === 1));
     } else {
       this.spawnRow(0, true);
     }
@@ -96,8 +89,7 @@ export class Swipe {
   save(): SwipeSave {
     return {
       round: this.round, ballCount: this.ballCount, launchX: Math.round(this.launchX), rowCount: this.rowCount,
-      bricks: this.bricks.map((k) => [k.col, k.row, k.hp] as [number, number, number]),
-      pickups: this.pickups.map((p) => [p.col, p.row] as [number, number]),
+      bricks: this.bricks.map((k) => [k.col, k.row, k.hp, k.bonus ? 1 : 0] as [number, number, number, number]),
     };
   }
 
@@ -112,11 +104,6 @@ export class Swipe {
     const t = 1 - Math.pow(1 - this.slide, 3);
     r.y -= (1 - t) * ROW_H * this.newRows;
     return r;
-  }
-
-  pickupCenter(p: Pickup): Vec2 {
-    const r = this.cellRect(p.col, p.row);
-    return new Vec2(r.centerX, r.centerY);
   }
 
   get launchPos(): Vec2 { return new Vec2(this.launchX, this.host.floorY() - BALL_SIZE / 2); }
@@ -245,7 +232,6 @@ export class Swipe {
       b.pos = b.pos.add(b.vel.scale(sdt));
       if (collideBorders(b) && b.idle > NUDGE_AFTER) nudge(b);
       this.collideBricks(b);
-      this.collectPickups(b);
       if (b.vel.y > 0 && b.pos.y + b.size >= floor) return true;
     }
     return false;
@@ -259,20 +245,11 @@ export class Swipe {
     bounceOff(b, this.cellRect(k.col, k.row));
     b.idle = 0;
     k.hp--;
-    if (k.hp <= 0) this.bricks.splice(i, 1);
-    this.host.brickHit(k.hp <= 0);
-  }
-
-  private collectPickups(b: Ball): void {
-    const c = new Vec2(b.pos.x + b.size / 2, b.pos.y + b.size / 2);
-    for (let i = this.pickups.length - 1; i >= 0; i--) {
-      const p = this.pickupCenter(this.pickups[i]);
-      if (Math.hypot(p.x - c.x, p.y - c.y) < PICK_R + b.size / 2) {
-        this.pickups.splice(i, 1);
-        this.collected++;
-        this.host.pickup();
-      }
+    if (k.hp <= 0) {
+      this.bricks.splice(i, 1);
+      if (k.bonus) { this.collected++; this.host.pickup(); }   // +1 벽돌: 다음 차례부터 공 하나 더
     }
+    this.host.brickHit(k.hp <= 0);
   }
 
   private endTurn(): void {
@@ -285,8 +262,6 @@ export class Swipe {
       r -= ROWS_CHANCE[i];
     }
     for (const b of this.bricks) b.row += k;
-    for (const p of this.pickups) p.row += k;
-    this.pickups = this.pickups.filter((p) => p.row <= this.lastRow);   // 바닥까지 온 +1 은 사라짐
     for (let row = 0; row < k; row++) this.spawnRow(row, row === 0);   // +1 은 차례마다 하나 (맨 위 줄에)
     this.newRows = k;
     this.slide = 0;
@@ -303,7 +278,8 @@ export class Swipe {
       const hp = n >= 5 && Math.random() < 0.2 ? n * 2 : n;
       this.bricks.push(new SwipeBrick(cols[i], row, hp));
     }
-    if (withPickup) this.pickups.push(new Pickup(cols[count], row));
+    // +1 은 새 줄 벽돌 중 하나를 무작위로 '+1 벽돌'로
+    if (withPickup) this.bricks[this.bricks.length - 1 - randInt(count)].bonus = true;
     this.rowCount++;
   }
 }
