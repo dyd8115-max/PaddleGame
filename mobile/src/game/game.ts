@@ -135,7 +135,7 @@ export class Game {
   // 지금 판의 기록: 꼬마는 라운드, 엘프는 스테이지, 성녀는 버틴 초
   get record(): number {
     if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
-    if (this.mode === 'climb') return this.climb ? this.climb.stage : this.lastRecord_;
+    if (this.mode === 'climb') return this.climb ? Math.floor(this.climb.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
     if (this.mode === 'survival') return Math.floor(this.survivalTime_ * 10) / 10;
     return this.stage_;
@@ -264,7 +264,7 @@ export class Game {
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
   }
 
-  // 꼬마 모드: 블록 피해 오르기
+  // 꼬마 모드: 용암 피해 블록 밟고 오르기
   private startClimb(): void {
     this.balls = [];
     this.items = [];
@@ -275,9 +275,7 @@ export class Game {
     this.climb = new Climb({
       hurt: () => this.events_.push('hurt'),
       land: () => this.events_.push('brickHit'),
-      jump: () => undefined,
-      stageClear: () => { this.score_ += 100; this.events_.push('stageClear'); },
-      lineClear: (n) => { this.score_ += 20 * n; this.events_.push('brickBreak'); },
+      higher: () => { this.score_ += 10; },
       gameOver: () => this.endGame('gameover'),
     });
   }
@@ -360,7 +358,6 @@ export class Game {
       const c = this.climb;
       c.update(dt);
       if (this.climb) {
-        this.stage_ = c.stage;
         const p = this.player;
         if (c.vx !== 0) p.facingLeft = c.vx < 0;
         const was = p.walking;

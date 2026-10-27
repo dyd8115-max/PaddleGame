@@ -12,7 +12,7 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 export const PLAYER_SCALE = 1.5;
 
 // 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
-// climb:    떨어지는 테트리스 블록을 피해 쌓인 블록을 밟고 빨간 선까지. 몇 스테이지까지 갔나 (꼬마)
+// climb:    떨어지는 테트리스 블록을 밟고 올라 차오르는 용암을 피함. 버틴 시간 (꼬마)
 // mine:     지뢰 벽돌깨기 (지금은 쓰지 않음)
 // swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (엘프)
 // archer:   궁수의 전설처럼 움직이다 멈추면 자동 발사 (지금은 쓰지 않음)
@@ -37,8 +37,8 @@ export const Characters = {
   List: [
     {
       name: 'KID', fps: 15, mode: 'climb', speedMul: 1, paddleW: 80,
-      ability: '블록 피해 오르기 · 몇 스테이지까지 갈까',
-      hints: ['왼쪽 아래 ◀ ▶ 로 걷고, 오른쪽 아래 버튼으로 점프', '블록에 깔리지 않게 밟고 올라 빨간 선까지 (2단 점프)'],
+      ability: '용암 피해 오르기 · 몇 초 버틸까',
+      hints: ['왼쪽 아래 ◀ ▶ 로 걷고, 오른쪽 아래 버튼으로 점프', '블록을 밟고 올라 용암을 피해요. 깔리면 끝 (2단 점프)'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,

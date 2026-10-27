@@ -4,7 +4,7 @@ import type { Game } from './game/game';
 import { Rect } from './game/geometry';
 import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
 import { SKILLS } from './game/archer';
-import { CELL, KID_H, KID_W, PIECE_COLORS } from './game/climb';
+import { CELL, KID_H, KID_W, LAVA_DELAY, PIECE_COLORS } from './game/climb';
 
 const ARROW_SPEED_DRAW = 720;   // 화살 꼬리 길이 계산용 (archer.ts 의 화살 빠르기)
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
@@ -152,11 +152,11 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
   }
 }
 
-// 기록 글자: 꼬마는 스테이지, 엘프는 쏜 공 수, 성녀는 버틴 시간
+// 기록 글자: 엘프는 라운드, 꼬마·성녀는 버틴 시간
 function formatRecord(mode: GameMode, v: number): string {
   if (mode === 'swipe') return `ROUND ${v}`;
-  if (mode === 'archer' || mode === 'climb') return `STAGE ${v}`;
-  if (mode === 'survival') {
+  if (mode === 'archer') return `STAGE ${v}`;
+  if (mode === 'survival' || mode === 'climb') {
     if (v < 60) return `${v.toFixed(1)}초`;
     return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
   }
@@ -178,21 +178,25 @@ function drawBlock(ctx: Ctx, r: Rect, color: string, alpha = 1): void {
 
 function drawClimb(ctx: Ctx, game: Game, v: View): void {
   const c = game.climb!;
-
-  // 빨간 선: 머리가 닿으면 클리어
   ctx.save();
-  ctx.setLineDash([12, 8]);
-  ctx.strokeStyle = 'rgba(255,80,80,0.9)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(0, c.lineY);
-  ctx.lineTo(World.Width, c.lineY);
-  ctx.stroke();
-  ctx.restore();
-  text(ctx, '도착', World.Width - 26, c.lineY - 12, 13, '#ff8080', { bold: true });
+  ctx.translate(0, -c.viewTop);   // 화면이 꼬마를 따라 위로
+  const top = c.viewTop, bottom = c.viewBottom;
 
-  // 쌓인 블록
-  for (let r = 0; r < c.grid.length; r++) {
+  // 높이 눈금: 10칸마다
+  for (let r = Math.ceil(-bottom / CELL / 10) * 10; r * CELL <= -top; r += 10) {
+    if (r <= 0) continue;
+    const y = -r * CELL;
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(0, y - 1, World.Width, 2);
+    text(ctx, `${r}칸`, World.Width - 22, y - 10, 12, 'rgba(255,255,255,0.45)', { bold: true });
+  }
+
+  // 바닥
+  if (bottom > 0) { ctx.fillStyle = '#3a3346'; ctx.fillRect(0, 0, World.Width, bottom); }
+
+  // 쌓인 블록 (화면에 보이는 줄만)
+  const r0 = Math.max(0, Math.floor(-bottom / CELL)), r1 = Math.min(c.grid.length - 1, Math.ceil(-top / CELL));
+  for (let r = r0; r <= r1; r++) {
     for (let col = 0; col < c.grid[r].length; col++) {
       const k = c.grid[r][col];
       if (k >= 0) drawBlock(ctx, c.cellRect(col, r), PIECE_COLORS[k]);
@@ -200,28 +204,65 @@ function drawClimb(ctx: Ctx, game: Game, v: View): void {
   }
   // 떨어질 자리 그림자, 떨어지는 블록
   for (const p of c.pieces) {
+    if (p.y + 2 * CELL < top) continue;   // 아직 화면 위에 있는 블록은 그림자 없음
     const lr = c.landRow(p);
-    for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellRect(p.col + cx, lr + cy), PIECE_COLORS[p.color], 0.22);
+    for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellRect(p.col + cx, lr - cy), PIECE_COLORS[p.color], 0.22);
   }
   for (const p of c.pieces) {
     for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellAt(p, cx, cy), PIECE_COLORS[p.color]);
   }
 
-  // 꼬마: 판정 상자 아랫면에 맞춰 그림 (맞은 직후 깜빡임)
+  // 꼬마: 판정 상자 아랫면에 맞춰 그림
   const p = game.player;
-  if (c.invuln <= 0 || Math.floor(v.time * 12) % 2 === 0) {
-    const h = CELL * 1.05, w = h * (Characters.CellW / Characters.CellH);   // 한 칸 크기
-    const dst = new Rect(c.x + KID_W / 2 - w / 2, c.y + KID_H - h + 2, w, h);
-    drawCharacter(ctx, p.character, p.frame(), p.facingLeft, dst);
+  const h = CELL * 1.05, w = h * (Characters.CellW / Characters.CellH);   // 한 칸 크기
+  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(c.x + KID_W / 2 - w / 2, c.y + KID_H - h + 2, w, h));
+
+  // 용암: 윗면이 출렁이고 위로 붉은 빛
+  const ly = c.lavaY;
+  if (ly < bottom + 40) {
+    const glow = ctx.createLinearGradient(0, ly - 70, 0, ly);
+    glow.addColorStop(0, 'rgba(255,80,20,0)');
+    glow.addColorStop(1, 'rgba(255,80,20,0.35)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, ly - 70, World.Width, 70);
+    const lava = ctx.createLinearGradient(0, ly, 0, ly + 120);
+    lava.addColorStop(0, '#ffb020');
+    lava.addColorStop(0.25, '#ff5a10');
+    lava.addColorStop(1, '#a01808');
+    ctx.fillStyle = lava;
+    ctx.beginPath();
+    ctx.moveTo(0, bottom + 10);
+    for (let x = 0; x <= World.Width; x += 12) ctx.lineTo(x, ly + Math.sin(x / 38 + v.time * 3) * 4 + Math.sin(x / 17 - v.time * 2) * 2);
+    ctx.lineTo(World.Width, bottom + 10);
+    ctx.closePath();
+    ctx.fill();
+    // 거품
+    ctx.fillStyle = 'rgba(255,230,120,0.75)';
+    for (let i = 0; i < 7; i++) {
+      const bx = ((i * 73 + v.time * 20 * (i % 2 ? 1 : -1)) % World.Width + World.Width) % World.Width;
+      const by = ly + 14 + ((i * 29) % 40) - ((v.time * 18 + i * 11) % 30);
+      ctx.beginPath();
+      ctx.arc(bx, Math.max(ly + 4, by), 2 + (i % 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  // 용암까지 거리 경고
+  const gap = (ly - (c.y + KID_H)) / CELL;
+  if (c.time > LAVA_DELAY && gap < 3) {
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(v.time * 12);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(World.Width / 2 - 90, World.Height * 0.18 - 16, 180, 32);
+    text(ctx, '용암이 가까워요!', World.Width / 2, World.Height * 0.18, 18, '#ffb040', { bold: true });
+    ctx.globalAlpha = 1;
   }
 
-  const my = World.Height * 0.42;
-  if (c.clearTimer > 0) {
-    text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
-    text(ctx, '다음 스테이지는 블록이 더 빨라요', World.Width / 2, my + 42, 16, '#dcdce6');
-  } else if (c.stage === 1 && c.time < 3.5) {
-    text(ctx, '블록을 피해 밟고 올라 빨간 선까지!', World.Width / 2, my, 19, WHITE, { bold: true });
+  const my = World.Height * 0.32;
+  if (c.time < 4) {
+    text(ctx, '블록을 밟고 위로! 용암이 차올라요', World.Width / 2, my, 19, WHITE, { bold: true });
     text(ctx, '◀ ▶ 로 걷고, 오른쪽 버튼으로 점프 (공중에서 한 번 더)', World.Width / 2, my + 32, 15, '#dcdce6');
+    text(ctx, '블록에 깔리면 끝', World.Width / 2, my + 56, 15, '#ffb0b0');
   }
 }
 
@@ -729,7 +770,7 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = game.climb ? '블록에 깔리면 끝'
+    const sub = game.climb ? `높이 ${game.climb.best}칸${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
       : mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
       : sw ? `공 ${sw.ballCount}개 · 다음 ${sw.nextRows}줄 내려옴`
       : ar ? `Lv ${ar.level} · 체력 ${Math.max(0, ar.hp)}/${ar.maxHp}`

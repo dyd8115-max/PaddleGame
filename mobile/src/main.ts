@@ -25,7 +25,7 @@ let clock = 0;
 
 // ---------- 저장 ----------
 // 캐릭터별 최고 기록 (게임 방식이 바뀌면 키도 바꿔서 단위가 다른 옛 기록과 섞이지 않게)
-const KEY_BEST = (ch: number) => ['best0c', 'best1r', 'best2'][ch];
+const KEY_BEST = (ch: number) => ['best0t', 'best1r', 'best2'][ch];
 const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(엘프) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
