@@ -7,7 +7,8 @@
 // - 테트리스처럼 한 줄이 꽉 차면 그 줄이 사라진다
 // - 공중에서 한 번 더 뛸 수 있다 (2단 점프)
 // - 빨간 선 위로 삐져나온 칸은 사라진다
-// - 떨어지는 블록에 맞으면 체력 -1 (3개)
+// - 목숨은 하나. 떨어지는 블록에 깔리면(블록이 꼬마 자리에 굳으면) 끝
+// - 블록 모양은 무작위(같은 모양 연속 없음), 떨어지는 칸은 섞은 순서대로 돌아가며 골고루
 // - 기록은 도달한 스테이지
 import { Rect } from './geometry';
 import { World } from './objects';
@@ -24,13 +25,12 @@ export interface ClimbHost {
 export const CELL = 48;                 // 칸 크기 (가로 10칸)
 const COLS = World.Width / CELL;
 const LINE_ROWS = 2;                    // 빨간 선 위로 남겨 두는 줄 수
-export const KID_W = 28;                // 꼬마 판정 크기
-export const KID_H = 52;
+export const KID_W = 30;                // 꼬마 판정 크기: 한 칸보다 작아서 한 칸짜리 틈에도 들어감
+export const KID_H = 42;
 const GRAVITY = 1800;
 const JUMP_SPEED = 600;                 // 블록 한 칸 반쯤 뛰어오름
 const WALK_SPEED = 230;
-const HURT_INVULN = 1.5;
-const START_HEARTS = 3;
+const START_HEARTS = 1;
 const CLEAR_PAUSE = 1.4;
 
 // 테트리스 블록 7종 (칸 좌표)과 색
@@ -80,22 +80,25 @@ export class Climb {
   time = 0;
 
   private spawnTimer = 0.6;
+  private colBag: number[] = [];   // 떨어질 칸 순서 (섞어 두고 하나씩 꺼냄 → 한쪽에 몰리지 않음)
+  private lastKind = -1;
 
   constructor(private host: ClimbHost) {
     this.startStage();
   }
 
-  get rows(): number { return Math.floor(World.Height / CELL); }
+  rows = Math.floor(World.Height / CELL);   // 스테이지 시작 때 정함 (도중에 화면 크기가 바뀌어도 격자는 그대로)
   get gridTop(): number { return World.Height - this.rows * CELL; }   // 바닥에 맞춰 격자를 둠
   get lineY(): number { return this.gridTop + LINE_ROWS * CELL; }     // 빨간 선
   get moving(): boolean { return Math.abs(this.vx) > 1; }
-  get fallSpeed(): number { return Math.min(320, 110 + (this.stage - 1) * 25); }
-  get spawnEvery(): number { return Math.max(0.55, 1.6 - (this.stage - 1) * 0.12); }
+  get fallSpeed(): number { return Math.min(260, 80 + (this.stage - 1) * 15); }
+  get spawnEvery(): number { return Math.max(0.8, 2.2 - (this.stage - 1) * 0.12); }
 
   kidRect(): Rect { return new Rect(this.x, this.y, KID_W, KID_H); }
   cellRect(c: number, r: number): Rect { return new Rect(c * CELL, this.gridTop + r * CELL, CELL, CELL); }
 
   private startStage(): void {
+    this.rows = Math.floor(World.Height / CELL);
     this.grid = Array.from({ length: this.rows }, () => Array(COLS).fill(-1));
     this.pieces = [];
     this.x = World.Width / 2 - KID_W / 2;
@@ -148,11 +151,17 @@ export class Climb {
   }
 
   private spawnPiece(): void {
-    const kind = randInt(SHAPES.length);
+    let kind = randInt(SHAPES.length);
+    if (kind === this.lastKind) kind = (kind + 1 + randInt(SHAPES.length - 1)) % SHAPES.length;   // 같은 모양 연속 없음
+    this.lastKind = kind;
     const cells = rotate(SHAPES[kind], randInt(4));
     const w = Math.max(...cells.map((c) => c[0])) + 1;
     const h = Math.max(...cells.map((c) => c[1])) + 1;
-    this.pieces.push({ cells, col: randInt(COLS - w + 1), y: this.gridTop - h * CELL, color: kind });
+    // 양 끝 칸은 옆 블록에 덜 덮이니까 주머니에 두 번씩 넣어 골고루 쌓이게
+    if (this.colBag.length === 0) this.colBag = [...Array(COLS).keys(), 0, COLS - 1].sort(() => Math.random() - 0.5);
+    const center = this.colBag.pop()!;   // 꺼낸 칸을 블록 가운데로 (너비 때문에 한쪽에 몰리지 않게)
+    const col = Math.max(0, Math.min(COLS - w, center - Math.floor(Math.random() * w)));
+    this.pieces.push({ cells, col, y: this.gridTop - h * CELL, color: kind });
   }
 
   // 지금 칸 위치에서 아래로 떨어지면 멈출 줄 (위쪽 칸 줄 번호). 그림자용
@@ -167,14 +176,13 @@ export class Climb {
     for (const p of this.pieces) {
       const stop = this.gridTop + this.landRow(p) * CELL;
       p.y = Math.min(stop, p.y + this.fallSpeed * dt);
-      // 떨어지는 블록에 맞으면 체력 -1
-      if (this.invuln <= 0 && p.cells.some(([cx, cy]) => this.cellAt(p, cx, cy).intersects(this.kidRect()))) {
-        this.hearts--;
-        this.invuln = HURT_INVULN;
-        this.host.hurt();
-        if (this.hearts <= 0) { this.host.gameOver(); return; }
-      }
-      if (p.y >= stop) {   // 착지: 격자에 굳힘
+      if (p.y >= stop) {   // 착지: 격자에 굳힘. 꼬마 자리에 굳으면 깔림 → 끝
+        if (p.cells.some(([cx, cy]) => this.cellAt(p, cx, cy).intersects(this.kidRect()))) {
+          this.hearts = 0;
+          this.host.hurt();
+          this.host.gameOver();
+          return;
+        }
         const r0 = Math.round((p.y - this.gridTop) / CELL);
         for (const [cx, cy] of p.cells) {
           const r = r0 + cy;

@@ -71,7 +71,9 @@ function resize(): void {
     left: Math.max(0, rawInsets.left - rect.left),
     right: Math.max(0, rawInsets.right - (window.innerWidth - rect.right)),
   };
-  layout = makeLayout(w, h, dpr, insets);
+  // 꼬마 오르기는 아래 조작 공간을 넓혀서 큰 버튼을 둠
+  const climbing = Characters.List[game.state === 'playing' ? game.player.character : game.selected].mode === 'climb';
+  layout = makeLayout(w, h, dpr, insets, climbing ? 108 : undefined);
   game.setWorldHeight(layout.worldH);
 }
 window.addEventListener('resize', resize);
@@ -88,6 +90,7 @@ function start(fresh = false): void {
   if (game.state !== 'menu') return;
   const isElf = Characters.List[game.selected].mode === 'swipe';
   if (isElf && fresh) clearElfSave();
+  resize();   // 캐릭터에 따라 아래 조작 공간 높이가 달라서, 시작 전에 화면 배치를 다시 계산
   game.startGame(isElf && elfSave ? elfSave : undefined);
   savedRound = game.swipe ? game.swipe.round : 0;
   void saveValue(KEY_CHAR, String(game.selected));

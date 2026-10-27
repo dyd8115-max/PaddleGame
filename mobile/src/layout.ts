@@ -39,10 +39,11 @@ export interface Layout {
   climbJump: Rect;
 }
 
-export function makeLayout(w: number, h: number, dpr: number, insets: Insets): Layout {
+// touchMin: 아래 조작 공간 높이 (꼬마 오르기는 큰 버튼이 게임 화면을 가리지 않게 넓힘)
+export function makeLayout(w: number, h: number, dpr: number, insets: Insets, touchMin = TOUCH_MIN): Layout {
   const hudTop = insets.top;
   const availW = w - insets.left - insets.right;
-  const availH = h - insets.top - HUD_H - insets.bottom - TOUCH_MIN;
+  const availH = h - insets.top - HUD_H - insets.bottom - touchMin;
   const scale = Math.max(0.1, Math.min(availW / World.Width, availH / MENU_H));
   // 조작 공간을 빼고 남는 세로는 게임 세계를 늘려서 채움
   const worldH = Math.min(WORLD_H_MAX, Math.max(MENU_H, availH / scale));
@@ -56,7 +57,7 @@ export function makeLayout(w: number, h: number, dpr: number, insets: Insets): L
   const by = hudTop + (HUD_H - btn) / 2;
   const left = insets.left + 10;
   // 꼬마 오르기 버튼: 아래 조작 공간에 맞춰 크기를 정하고, 모자라면 게임 영역 아래쪽에 살짝 겹침
-  const cb = Math.max(56, Math.min(76, touch.h - 8));
+  const cb = Math.max(64, Math.min(96, touch.h - 12));
   const cy = h - insets.bottom - 6 - cb;
   return {
     climbLeft: new Rect(insets.left + 12, cy, cb, cb),

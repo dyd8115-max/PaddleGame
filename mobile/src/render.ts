@@ -210,7 +210,7 @@ function drawClimb(ctx: Ctx, game: Game, v: View): void {
   // 꼬마: 판정 상자 아랫면에 맞춰 그림 (맞은 직후 깜빡임)
   const p = game.player;
   if (c.invuln <= 0 || Math.floor(v.time * 12) % 2 === 0) {
-    const w = CELL * 1.15, h = w * (Characters.CellH / Characters.CellW);
+    const h = CELL * 1.05, w = h * (Characters.CellW / Characters.CellH);   // 한 칸 크기
     const dst = new Rect(c.x + KID_W / 2 - w / 2, c.y + KID_H - h + 2, w, h);
     drawCharacter(ctx, p.character, p.frame(), p.facingLeft, dst);
   }
@@ -416,23 +416,43 @@ function hpColor(hp: number, maxHp: number): string {
   return `hsl(${Math.round(135 - t * 135)}, 62%, 56%)`;
 }
 
-function drawSwipe(ctx: Ctx, game: Game): void {
+function drawSwipe(ctx: Ctx, game: Game, v: View): void {
   const s = game.swipe!;
   const floor = game.paddle.y + game.paddle.h;
 
-  // 바닥선: 벽돌이 여기 닿으면 끝
+  // 바닥선 (공이 돌아오는 곳)
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   ctx.fillRect(0, floor, World.Width, 1.5);
+
+  // 끝나는 선: 벽돌이 이 선을 넘으면 끝
+  ctx.save();
+  ctx.setLineDash([10, 7]);
+  ctx.strokeStyle = 'rgba(255,80,80,0.85)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, s.deathY);
+  ctx.lineTo(World.Width, s.deathY);
+  ctx.stroke();
+  ctx.restore();
+  text(ctx, '벽돌이 이 선을 넘으면 끝', World.Width / 2, s.deathY + 12, 12, '#ff8a8a', { bold: true });
 
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 
   const maxHp = s.bricks.reduce((m, k) => Math.max(m, k.hp), 1);
+  const blink = 0.5 + 0.5 * Math.sin(v.time * 8);
   for (const k of s.bricks) {
     const r = s.drawRect(k.col, k.row);
     roundRect(ctx, r, 6);
     ctx.fillStyle = hpColor(k.hp, maxHp);
     ctx.fill();
+    // 다음에 줄이 내려오면 선을 넘는 벽돌: 빨간 테두리가 깜빡임
+    if (s.phase === 'aim' && s.inDanger(k)) {
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = `rgba(255,60,60,${0.5 + 0.5 * blink})`;
+      ctx.stroke();
+      roundRect(ctx, r, 6);
+    }
     if (k.bonus) {   // +1 벽돌: 초록 테두리와 작은 +1
       ctx.lineWidth = 3;
       ctx.strokeStyle = '#4ddc7a';
@@ -487,7 +507,7 @@ function drawSwipe(ctx: Ctx, game: Game): void {
 function drawPlaying(ctx: Ctx, game: Game, v: View): void {
   if (game.climb) { drawClimb(ctx, game, v); return; }
   if (game.archer) { drawArcher(ctx, game, v); return; }
-  if (game.swipe) { drawSwipe(ctx, game); return; }
+  if (game.swipe) { drawSwipe(ctx, game, v); return; }
   const p = game.player;
   drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 
@@ -709,9 +729,9 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = game.climb ? `체력 ${game.climb.hearts}/3`
+    const sub = game.climb ? '블록에 깔리면 끝'
       : mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
-      : sw ? `공 ${sw.ballCount}개`
+      : sw ? `공 ${sw.ballCount}개 · 다음 ${sw.nextRows}줄 내려옴`
       : ar ? `Lv ${ar.level} · 체력 ${Math.max(0, ar.hp)}/${ar.maxHp}`
       : best > 0 ? `최고 ${formatRecord(mode, best)}` : '첫 도전';
     ctx.save();
@@ -794,7 +814,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
     pad(l.climbRight, cl.keyDir > 0);
     arrow(l.climbRight, 1);
     pad(l.climbJump, !cl.grounded);
-    text(ctx, '점프', l.climbJump.centerX, l.climbJump.centerY + 1, 18, WHITE, { bold: true });
+    text(ctx, '점프', l.climbJump.centerX, l.climbJump.centerY + 1, 22, WHITE, { bold: true });
   }
 
   // 엘프 모드 조이스틱: 누른 곳에 큰 원, 끈 쪽에 작은 원 (화면 픽셀)

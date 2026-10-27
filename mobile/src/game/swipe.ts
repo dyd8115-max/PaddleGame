@@ -49,6 +49,7 @@ export interface SwipeSave {
   ballCount: number;
   launchX: number;
   rowCount: number;
+  nextRows?: number;
   bricks: [number, number, number, number?][];   // 칸, 줄, 숫자, +1 벽돌이면 1
   pickups?: [number, number][];         // 예전 저장 형식 (공중의 +1). 지금은 쓰지 않음
 }
@@ -56,7 +57,8 @@ export interface SwipeSave {
 export class Swipe {
   phase: SwipePhase = 'aim';
   round = 1;
-  ballCount = 1;            // 가진 공 수
+  ballCount = 5;            // 가진 공 수 (공 5개로 시작)
+  nextRows = 1;             // 다음 차례 뒤에 내려올 줄 수 (미리 정해서 보여 줌)
   launchX = World.Width / 2; // 쏠 자리 (공 가운데 x). 조준 단계에서 엘프가 걸어가 정한다
   rowCount = 0;              // 지금까지 만든 줄 수
   newRows = 1;               // 이번에 새로 생긴 줄 수 (내려오는 그림용)
@@ -80,15 +82,17 @@ export class Swipe {
       this.ballCount = save.ballCount;
       this.launchX = save.launchX;
       this.rowCount = save.rowCount;
+      this.nextRows = save.nextRows ?? this.pickRows();
       this.bricks = save.bricks.map(([c, r, hp, b]) => new SwipeBrick(c, r, hp, b === 1));
     } else {
       this.spawnRow(0, true);
+      this.nextRows = this.pickRows();
     }
   }
 
   save(): SwipeSave {
     return {
-      round: this.round, ballCount: this.ballCount, launchX: Math.round(this.launchX), rowCount: this.rowCount,
+      round: this.round, ballCount: this.ballCount, launchX: Math.round(this.launchX), rowCount: this.rowCount, nextRows: this.nextRows,
       bricks: this.bricks.map((k) => [k.col, k.row, k.hp, k.bonus ? 1 : 0] as [number, number, number, number]),
     };
   }
@@ -109,7 +113,23 @@ export class Swipe {
   get launchPos(): Vec2 { return new Vec2(this.launchX, this.host.floorY() - BALL_SIZE / 2); }
 
   // 이 줄까지 내려오면 끝 (바닥에서 공 두 개 높이 위)
-  private get lastRow(): number {
+  // 이 줄 아래 끝을 넘으면 끝 (그리기용)
+  get deathY(): number { return TOP + (this.lastRow + 1) * ROW_H - GAP / 2; }
+
+  // 다음에 내려올 줄 수: 1줄 50%, 2줄 30%, 3줄 20%
+  private pickRows(): number {
+    let r = Math.random();
+    for (let i = 0; i < ROWS_CHANCE.length; i++) {
+      if (r < ROWS_CHANCE[i]) return i + 1;
+      r -= ROWS_CHANCE[i];
+    }
+    return 1;
+  }
+
+  // 다음에 줄이 내려오면 선을 넘는 벽돌 (지금 깨야 함)
+  inDanger(k: SwipeBrick): boolean { return k.row + this.nextRows > this.lastRow; }
+
+  get lastRow(): number {
     return Math.floor((this.host.floorY() - BALL_SIZE * 2 - TOP + GAP) / ROW_H) - 1;
   }
 
@@ -255,12 +275,9 @@ export class Swipe {
   private endTurn(): void {
     this.ballCount += this.collected;
     this.round++;
-    // 새 줄 수: 1줄 50%, 2줄 30%, 3줄 20%
-    let r = Math.random(), k = 1;
-    for (let i = 0; i < ROWS_CHANCE.length; i++) {
-      if (r < ROWS_CHANCE[i]) { k = i + 1; break; }
-      r -= ROWS_CHANCE[i];
-    }
+    // 미리 보여 준 줄 수만큼 내려오고, 그다음 줄 수를 새로 정함
+    const k = this.nextRows;
+    this.nextRows = this.pickRows();
     for (const b of this.bricks) b.row += k;
     for (let row = 0; row < k; row++) this.spawnRow(row, row === 0);   // +1 은 차례마다 하나 (맨 위 줄에)
     this.newRows = k;
