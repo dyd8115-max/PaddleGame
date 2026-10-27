@@ -6,6 +6,7 @@ import { bounceOff, nudge } from './collide';
 import { Swipe, type SwipeSave } from './swipe';
 import { Archer } from './archer';
 import { Climb } from './climb';
+import { Horde } from './horde';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -111,7 +112,8 @@ export class Game {
   walls: Rect[] = [];   // 회색 벽 (깨지지 않음)
   swipe: Swipe | null = null;   // 꼬마 모드일 때만
   archer: Archer | null = null; // 궁수 모드일 때만 (지금은 쓰지 않음)
-  climb: Climb | null = null;   // 꼬마 모드일 때만
+  climb: Climb | null = null;   // 용암 오르기 (지금은 쓰지 않음)
+  horde: Horde | null = null;   // 꼬마 모드일 때만
   private events_: GameEvent[] = [];
 
   constructor() {
@@ -135,6 +137,7 @@ export class Game {
   // 지금 판의 기록: 꼬마는 라운드, 엘프는 스테이지, 성녀는 버틴 초
   get record(): number {
     if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
+    if (this.mode === 'horde') return this.horde ? Math.floor(this.horde.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'climb') return this.climb ? Math.floor(this.climb.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
     if (this.mode === 'survival') return Math.floor(this.survivalTime_ * 10) / 10;
@@ -231,8 +234,10 @@ export class Game {
     this.swipe = null;
     this.archer = null;
     this.climb = null;
+    this.horde = null;
     this.hearts_ = MINE_HEARTS;
-    if (ch.mode === 'climb') this.startClimb();
+    if (ch.mode === 'horde') this.startHorde();
+    else if (ch.mode === 'climb') this.startClimb();
     else if (ch.mode === 'swipe') this.startSwipe(save);
     else if (ch.mode === 'archer') this.startArcher();
     else if (ch.mode === 'survival') this.startSurvival();
@@ -276,6 +281,25 @@ export class Game {
       hurt: () => this.events_.push('hurt'),
       land: () => this.events_.push('brickHit'),
       higher: () => { this.score_ += 10; },
+      gameOver: () => this.endGame('gameover'),
+    });
+  }
+
+  // 꼬마 모드: 괴물 피하며 싸우기
+  private startHorde(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.horde = new Horde({
+      hit: (killed) => {
+        this.events_.push(killed ? 'brickBreak' : 'brickHit');
+        if (killed) this.score_ += 10;
+      },
+      hurt: () => this.events_.push('hurt'),
+      levelUp: () => this.events_.push('levelUp'),
       gameOver: () => this.endGame('gameover'),
     });
   }
@@ -351,6 +375,19 @@ export class Game {
 
     if (this.state_ !== 'playing') {
       this.menuTime_ += dt;
+      return;
+    }
+
+    if (this.horde) {
+      const h = this.horde;
+      h.update(dt);
+      if (this.horde) {
+        const p = this.player;
+        if (h.vx !== 0) p.facingLeft = h.vx < 0;
+        const was = p.walking;
+        p.walking = h.moving;
+        if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;
+      }
       return;
     }
 
@@ -826,6 +863,7 @@ export class Game {
     this.swipe = null;
     this.archer = null;
     this.climb = null;
+    this.horde = null;
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');

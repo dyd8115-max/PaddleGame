@@ -3,6 +3,7 @@ import { Audio, type SoundName } from './audio';
 import { loadImages } from './assets';
 import { Game, type GameEvent } from './game/game';
 import type { SwipeSave } from './game/swipe';
+import { Vec2 } from './game/geometry';
 import { Characters, menuTop } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
@@ -25,7 +26,7 @@ let clock = 0;
 
 // ---------- 저장 ----------
 // 캐릭터별 최고 기록 (게임 방식이 바뀌면 키도 바꿔서 단위가 다른 옛 기록과 섞이지 않게)
-const KEY_BEST = (ch: number) => ['best0t', 'best1r', 'best2'][ch];
+const KEY_BEST = (ch: number) => ['best0h', 'best1r', 'best2'][ch];
 const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(엘프) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
@@ -100,6 +101,8 @@ function pause(): void {
   if (game.state === 'playing' && overlay === 'none') overlay = 'pause';
   game.swipe?.aimCancel();
   game.archer?.joyEnd();
+  game.horde?.joyEnd();
+  if (game.horde) game.horde.keyDir = new Vec2();
   climbHeld.clear();
   if (game.climb) game.climb.keyDir = 0;
 }
@@ -177,7 +180,9 @@ function movePaddle(x: number): void {
 // 엘프 모드(스와이프): 누른 채 당겨서 조준
 function swipeActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.swipe !== null; }
 // 엘프 모드: 끌어서 이동, 레벨업 카드 고르기
-function archerActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.archer !== null; }
+// 꼬마 모드(괴물)도 같은 조작
+function joyMode() { return game.archer ?? game.horde; }
+function archerActive(): boolean { return game.state === 'playing' && overlay === 'none' && joyMode() !== null; }
 
 canvas.addEventListener('pointerdown', (e) => {
   audio.unlock();   // 휴대폰은 첫 터치 뒤에야 소리를 낼 수 있음
@@ -200,7 +205,7 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (archerActive()) {
     const p = toWorld(layout, lx(e), ly(e));
-    const a = game.archer!;
+    const a = joyMode()!;
     if (a.choosing) a.pick(p.x, p.y);
     else a.joyBegin(lx(e), ly(e));   // 조이스틱은 화면 픽셀 기준
     return;
@@ -224,7 +229,7 @@ canvas.addEventListener('pointermove', (e) => {
   // 마우스는 누르지 않아도 따라오고, 터치는 누른 손가락만
   if (e.pointerType === 'touch' && e.pointerId !== activePointer) return;
   if (archerActive()) {
-    if (e.pointerId === activePointer) game.archer!.joyMove(lx(e), ly(e));
+    if (e.pointerId === activePointer) joyMode()!.joyMove(lx(e), ly(e));
     return;
   }
   if (flagTap && e.pointerId === activePointer) return;
@@ -266,7 +271,7 @@ function endPointer(e: PointerEvent): void {
   if (e.pointerId !== activePointer) return;
   activePointer = -1;
 
-  if (archerActive()) { game.archer!.joyEnd(); return; }
+  if (archerActive()) { joyMode()!.joyEnd(); return; }
   if (swipeActive()) {
     if (e.type === 'pointerup') game.swipe!.aimRelease();
     else game.swipe!.aimCancel();
@@ -291,6 +296,13 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowRight') game.moveSelection(1);
     else if (e.key >= '1' && e.key <= '3') game.selectCharacter(Number(e.key) - 1);
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
+  else if (game.horde && overlay === 'none') {   // 꼬마: 방향키로 이동
+    const k = game.horde.keyDir;
+    if (e.key === 'ArrowLeft') k.x = -1;
+    else if (e.key === 'ArrowRight') k.x = 1;
+    else if (e.key === 'ArrowUp') k.y = -1;
+    else if (e.key === 'ArrowDown') k.y = 1;
+  }
   else if (game.climb && overlay === 'none') {   // 꼬마 오르기: 방향키로 걷고 위/스페이스로 점프
     if (e.key === 'ArrowLeft') game.climb.keyDir = -1;
     else if (e.key === 'ArrowRight') game.climb.keyDir = 1;
@@ -298,6 +310,11 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (game.horde) {
+    const k = game.horde.keyDir;
+    if ((e.key === 'ArrowLeft' && k.x < 0) || (e.key === 'ArrowRight' && k.x > 0)) k.x = 0;
+    if ((e.key === 'ArrowUp' && k.y < 0) || (e.key === 'ArrowDown' && k.y > 0)) k.y = 0;
+  }
   if (!game.climb) return;
   if ((e.key === 'ArrowLeft' && game.climb.keyDir < 0) || (e.key === 'ArrowRight' && game.climb.keyDir > 0)) game.climb.keyDir = 0;
 });

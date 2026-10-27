@@ -3,7 +3,8 @@ import { images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
 import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
-import { SKILLS } from './game/archer';
+import { SKILLS, type SkillId } from './game/archer';
+import { KID_DRAW_H, KID_DRAW_W, SHOT_R, type Monster } from './game/horde';
 import { CELL, KID_H, KID_W, LAVA_DELAY, PIECE_COLORS } from './game/climb';
 
 const ARROW_SPEED_DRAW = 720;   // 화살 꼬리 길이 계산용 (archer.ts 의 화살 빠르기)
@@ -156,7 +157,7 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
 function formatRecord(mode: GameMode, v: number): string {
   if (mode === 'swipe') return `ROUND ${v}`;
   if (mode === 'archer') return `STAGE ${v}`;
-  if (mode === 'survival' || mode === 'climb') {
+  if (mode === 'survival' || mode === 'climb' || mode === 'horde') {
     if (v < 60) return `${v.toFixed(1)}초`;
     return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
   }
@@ -414,27 +415,187 @@ function drawArcher(ctx: Ctx, game: Game, v: View): void {
     text(ctx, '보스 등장!', World.Width / 2, World.Height * 0.62, 28, '#ff9a9a', { bold: true });
   }
 
-  // 레벨업: 스킬 카드 3장
-  if (a.choosing) {
-    ctx.fillStyle = 'rgba(8,10,16,0.75)';
-    ctx.fillRect(0, 0, World.Width, World.Height);
-    text(ctx, `레벨 업! Lv ${a.level}`, World.Width / 2, World.Height * 0.32 - 50, 28, ITEM_COLOR, { bold: true });
-    text(ctx, '스킬을 하나 고르세요', World.Width / 2, World.Height * 0.32 - 18, 15, '#dcdce6');
-    a.choosing.forEach((id, i) => {
-      const r = a.cardRect(i);
-      const info = SKILLS[id];
-      const lv = a.skills[id] ?? 0;
-      roundRect(ctx, r, 12);
-      ctx.fillStyle = CARD_SEL;
+  drawSkillCards(ctx, a);
+}
+
+// 레벨업: 스킬 카드 3장 (궁수·꼬마 공통)
+interface SkillPicker {
+  choosing: SkillId[] | null; level: number; skills: Partial<Record<SkillId, number>>;
+  cardRect(i: number): { x: number; y: number; w: number; h: number };
+}
+function drawSkillCards(ctx: Ctx, a: SkillPicker): void {
+  if (!a.choosing) return;
+  ctx.fillStyle = 'rgba(8,10,16,0.75)';
+  ctx.fillRect(0, 0, World.Width, World.Height);
+  text(ctx, `레벨 업! Lv ${a.level}`, World.Width / 2, World.Height * 0.32 - 50, 28, ITEM_COLOR, { bold: true });
+  text(ctx, '스킬을 하나 고르세요', World.Width / 2, World.Height * 0.32 - 18, 15, '#dcdce6');
+  a.choosing.forEach((id, i) => {
+    const c = a.cardRect(i);
+    const r = new Rect(c.x, c.y, c.w, c.h);
+    const info = SKILLS[id];
+    const lv = a.skills[id] ?? 0;
+    roundRect(ctx, r, 12);
+    ctx.fillStyle = CARD_SEL;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = ITEM_COLOR;
+    ctx.stroke();
+    text(ctx, info.name, r.centerX, r.y + 40, 16, WHITE, { bold: true });
+    wrapText(ctx, info.desc, r.centerX, r.y + 80, r.w - 16, 13, '#dcdce6');
+    if (id !== 'heal') text(ctx, `${lv} → ${lv + 1}`, r.centerX, r.bottom - 22, 14, ITEM_COLOR, { bold: true });
+  });
+}
+
+// ---------- 꼬마 괴물 모드 ----------
+function drawMonster(ctx: Ctx, m: Monster, kx: number, ky: number, t: number): void {
+  const { x, y } = m.pos, r = m.r;
+  const white = m.flash > 0;
+  ctx.save();
+  // 그림자
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + r * 0.85, r * 0.9, r * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const eyes = (ex: number, ey: number, gap: number, er: number) => {
+    const dx = kx - x, dy = ky - y, d = Math.hypot(dx, dy) || 1;
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = WHITE;
+      ctx.beginPath(); ctx.arc(ex + s * gap, ey, er, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1a1020';
+      ctx.beginPath(); ctx.arc(ex + s * gap + dx / d * er * 0.4, ey + dy / d * er * 0.4, er * 0.55, 0, Math.PI * 2); ctx.fill();
+    }
+  };
+  if (m.kind === 'slime') {
+    const sq = 1 + Math.sin(t * 8 + m.phase) * 0.08;
+    ctx.fillStyle = white ? WHITE : '#5ad66a';
+    ctx.beginPath();
+    ctx.ellipse(x, y + r * 0.2, r * sq, r * 0.85 / sq, 0, Math.PI, 0);
+    ctx.lineTo(x + r * sq, y + r * 0.6);
+    ctx.lineTo(x - r * sq, y + r * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.arc(x - r * 0.4, y - r * 0.25, r * 0.18, 0, Math.PI * 2); ctx.fill();
+    if (!white) eyes(x, y, r * 0.32, r * 0.22);
+  } else if (m.kind === 'bat') {
+    const flap = Math.sin(t * 18 + m.phase) * 0.6;
+    ctx.fillStyle = white ? WHITE : '#9a5ae0';
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(x + s * r * 0.4, y);
+      ctx.lineTo(x + s * r * 1.9, y - r * (0.6 + flap));
+      ctx.lineTo(x + s * r * 1.5, y + r * 0.3);
+      ctx.lineTo(x + s * r * 1.1, y + r * 0.1);
+      ctx.closePath();
       ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = ITEM_COLOR;
-      ctx.stroke();
-      text(ctx, info.name, r.centerX, r.y + 40, 16, WHITE, { bold: true });
-      wrapText(ctx, info.desc, r.centerX, r.y + 80, r.w - 16, 13, '#dcdce6');
-      if (id !== 'heal') text(ctx, `${lv} → ${lv + 1}`, r.centerX, r.bottom - 22, 14, ITEM_COLOR, { bold: true });
-    });
+    }
+    ctx.fillStyle = white ? WHITE : '#6a32b0';
+    ctx.beginPath(); ctx.arc(x, y, r * 0.75, 0, Math.PI * 2); ctx.fill();
+    if (!white) {
+      ctx.fillStyle = '#ffe14d';
+      ctx.beginPath(); ctx.arc(x - r * 0.28, y - r * 0.1, r * 0.17, 0, Math.PI * 2); ctx.arc(x + r * 0.28, y - r * 0.1, r * 0.17, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (m.kind === 'eye') {
+    ctx.fillStyle = white ? WHITE : '#7a2a8a';
+    ctx.beginPath(); ctx.arc(x, y, r * 1.05, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = WHITE;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.8, 0, Math.PI * 2); ctx.fill();
+    const dx = kx - x, dy = ky - y, d = Math.hypot(dx, dy) || 1;
+    const charge = Math.max(0, 1 - m.fireTimer / 0.6);   // 쏘기 직전에 빨갛게
+    ctx.fillStyle = charge > 0 ? `rgb(${200 + 55 * charge},${60 - 40 * charge},40)` : '#d23c3c';
+    ctx.beginPath(); ctx.arc(x + dx / d * r * 0.3, y + dy / d * r * 0.3, r * 0.42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a1020';
+    ctx.beginPath(); ctx.arc(x + dx / d * r * 0.38, y + dy / d * r * 0.38, r * 0.2, 0, Math.PI * 2); ctx.fill();
+  } else {
+    // 덩치: 뿔 달린 큰 몸
+    ctx.fillStyle = white ? WHITE : '#c0392b';
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(x + s * r * 0.35, y - r * 0.7);
+      ctx.lineTo(x + s * r * 0.75, y - r * 1.25);
+      ctx.lineTo(x + s * r * 0.8, y - r * 0.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    roundRect(ctx, new Rect(x - r, y - r * 0.8, r * 2, r * 1.7), r * 0.6);
+    ctx.fillStyle = white ? WHITE : '#d24a3a';
+    ctx.fill();
+    if (!white) {
+      eyes(x, y - r * 0.2, r * 0.32, r * 0.2);
+      ctx.fillStyle = '#5a1010';
+      ctx.fillRect(x - r * 0.4, y + r * 0.3, r * 0.8, r * 0.14);
+    }
   }
+  // 다친 괴물은 체력 막대
+  if (m.hp < m.maxHp && m.maxHp >= 3) {
+    const w = Math.max(24, r * 1.8), bx = x - w / 2, by = y - r - (m.kind === 'brute' ? 22 : 10);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(bx - 1, by - 1, w + 2, 6);
+    ctx.fillStyle = '#ff5a5a';
+    ctx.fillRect(bx, by, w * Math.max(0, m.hp / m.maxHp), 4);
+  }
+  ctx.restore();
+}
+
+function drawHeart(ctx: Ctx, cx: number, cy: number, s: number, full: boolean): void {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + s * 0.35);
+  ctx.bezierCurveTo(cx - s * 0.9, cy - s * 0.25, cx - s * 0.45, cy - s * 0.85, cx, cy - s * 0.35);
+  ctx.bezierCurveTo(cx + s * 0.45, cy - s * 0.85, cx + s * 0.9, cy - s * 0.25, cx, cy + s * 0.35);
+  ctx.fillStyle = full ? '#ff4d6a' : 'rgba(255,255,255,0.18)';
+  ctx.fill();
+}
+
+function drawHorde(ctx: Ctx, game: Game, v: View): void {
+  const h = game.horde!;
+  const t = v.time;
+
+  // 적 탄 경고 없이 바로: 괴물, 꼬마, 공, 탄 순서
+  const ms = [...h.monsters].sort((a, b) => a.pos.y - b.pos.y);
+  for (const m of ms) drawMonster(ctx, m, h.x, h.y, t);
+
+  // 꼬마 (맞은 직후 깜빡임)
+  const p = game.player;
+  if (h.invuln <= 0 || Math.floor(t * 12) % 2 === 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(h.x, h.y + KID_DRAW_H * 0.45, 16, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(h.x - KID_DRAW_W / 2, h.y - KID_DRAW_H / 2, KID_DRAW_W, KID_DRAW_H));
+  }
+
+  // 꼬마가 던진 공
+  for (const s of h.shots) {
+    ctx.fillStyle = 'rgba(255,240,150,0.35)';
+    ctx.beginPath(); ctx.arc(s.pos.x, s.pos.y, SHOT_R + 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff8d0';
+    ctx.beginPath(); ctx.arc(s.pos.x, s.pos.y, SHOT_R, 0, Math.PI * 2); ctx.fill();
+  }
+  // 괴물 탄
+  for (const b of h.bullets) {
+    ctx.beginPath();
+    ctx.arc(b.pos.x, b.pos.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff5a5a';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#2a0a0a';
+    ctx.stroke();
+  }
+
+  // 경험치 막대와 체력
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0, 0, World.Width, 6);
+  ctx.fillStyle = '#4ddc7a';
+  ctx.fillRect(0, 0, World.Width * Math.min(1, h.xp / h.xpNeed), 6);
+  for (let i = 0; i < h.maxHp; i++) drawHeart(ctx, 18 + i * 24, 22, 20, i < h.hp);
+
+  if (h.time < 3.5) {
+    const my = World.Height * 0.3;
+    text(ctx, '괴물이 사방에서 몰려와요!', World.Width / 2, my, 20, WHITE, { bold: true });
+    text(ctx, '화면 어디든 끌어서 피하고, 공은 자동으로 던져요', World.Width / 2, my + 30, 15, '#dcdce6');
+    text(ctx, '멈춰 있으면 두 배로 빨리 던져요', World.Width / 2, my + 52, 15, ITEM_COLOR);
+  }
+  drawSkillCards(ctx, h);
 }
 
 // 짧은 설명을 칸 너비에 맞춰 줄바꿈 (공백 기준)
@@ -465,20 +626,10 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   ctx.fillRect(0, floor, World.Width, 1.5);
 
-  // 끝나는 선: 벽돌이 이 선을 넘으면 끝
-  ctx.save();
-  ctx.setLineDash([10, 7]);
-  ctx.strokeStyle = 'rgba(255,80,80,0.85)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, s.deathY);
-  ctx.lineTo(World.Width, s.deathY);
-  ctx.stroke();
-  ctx.restore();
-  text(ctx, '벽돌이 이 선을 넘으면 끝', World.Width / 2, s.deathY + 12, 12, '#ff8a8a', { bold: true });
-
+  // 엘프: 발은 바닥에, 머리 꼭대기는 끝나는 높이에 딱 맞게 키워서 그림 (벽돌이 머리에 닿으면 끝)
   const p = game.player;
-  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
+  const feet = p.y + p.h, eh = feet - s.deathY, ew = eh * (Characters.CellW / Characters.CellH);
+  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(p.x + p.w / 2 - ew / 2, s.deathY, ew, eh));
 
   const maxHp = s.bricks.reduce((m, k) => Math.max(m, k.hp), 1);
   const blink = 0.5 + 0.5 * Math.sin(v.time * 8);
@@ -534,8 +685,9 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
     const lp = s.launchPos;
     outlinedRect(ctx, new Rect(lp.x - 5, lp.y - 5, 10, 10), WHITE);
     const n = s.phase === 'shoot' ? s.toLaunch : s.ballCount;
-    const tx = Math.max(22, Math.min(World.Width - 22, lp.x));   // 화면 끝에서도 글자가 잘리지 않게
-    text(ctx, `×${n}`, tx, lp.y - 17, 15, WHITE, { bold: true });
+    // 엘프 얼굴을 가리지 않게 공 옆에 (오른쪽 끝이면 왼쪽에)
+    const tx = lp.x + 26 > World.Width - 14 ? lp.x - 26 : lp.x + 26;
+    text(ctx, `×${n}`, tx, lp.y, 15, WHITE, { bold: true });
   }
 
   if (s.round === 1 && s.phase === 'aim' && !s.aiming) {
@@ -547,6 +699,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
 
 function drawPlaying(ctx: Ctx, game: Game, v: View): void {
   if (game.climb) { drawClimb(ctx, game, v); return; }
+  if (game.horde) { drawHorde(ctx, game, v); return; }
   if (game.archer) { drawArcher(ctx, game, v); return; }
   if (game.swipe) { drawSwipe(ctx, game, v); return; }
   const p = game.player;
@@ -770,7 +923,8 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = game.climb ? `높이 ${game.climb.best}칸${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
+    const sub = game.horde ? `처치 ${game.horde.kills} · Lv ${game.horde.level}${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
+      : game.climb ? `높이 ${game.climb.best}칸${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
       : mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
       : sw ? `공 ${sw.ballCount}개 · 다음 ${sw.nextRows}줄 내려옴`
       : ar ? `Lv ${ar.level} · 체력 ${Math.max(0, ar.hp)}/${ar.maxHp}`
@@ -822,7 +976,8 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    const hint = game.climb ? ''
+    const hint = game.horde ? '화면 어디든 끌어서 이동'
+      : game.climb ? ''
       : game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
       : game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';
     text(ctx, hint, l.w / 2, y, 14, WHITE);
@@ -859,7 +1014,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   }
 
   // 엘프 모드 조이스틱: 누른 곳에 큰 원, 끈 쪽에 작은 원 (화면 픽셀)
-  const ja = game.archer;
+  const ja = game.archer ?? game.horde;
   if (ja && ja.joyFrom && v.overlay === 'none' && !ja.choosing) {
     const f = ja.joyFrom, t = ja.joyTo;
     const dx = t.x - f.x, dy = t.y - f.y, len = Math.hypot(dx, dy), k = len > 44 ? 44 / len : 1;

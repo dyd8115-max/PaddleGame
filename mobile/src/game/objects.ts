@@ -12,13 +12,14 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 export const PLAYER_SCALE = 1.5;
 
 // 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
-// climb:    떨어지는 테트리스 블록을 밟고 올라 차오르는 용암을 피함. 버틴 시간 (꼬마)
+// horde:    사방에서 몰려오는 괴물을 피하며 자동으로 공을 던져 잡음. 버틴 시간 (꼬마)
+// climb:    떨어지는 테트리스 블록을 밟고 올라 차오르는 용암을 피함. 버틴 시간 (지금은 쓰지 않음)
 // mine:     지뢰 벽돌깨기 (지금은 쓰지 않음)
 // swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (엘프)
 // archer:   궁수의 전설처럼 움직이다 멈추면 자동 발사 (지금은 쓰지 않음)
 // survival: 3초마다 벽돌 줄이 위에서 생겨 내려온다. 몇 초 버텼나 (성녀)
 // stage:    패들로 받아 벽돌을 깨고 다음 맵으로 (지금은 쓰지 않음)
-export type GameMode = 'stage' | 'climb' | 'mine' | 'swipe' | 'archer' | 'survival';
+export type GameMode = 'stage' | 'climb' | 'horde' | 'mine' | 'swipe' | 'archer' | 'survival';
 
 export interface CharacterDef {
   name: string;
@@ -36,9 +37,9 @@ export const Characters = {
   CellH: 80,
   List: [
     {
-      name: 'KID', fps: 15, mode: 'climb', speedMul: 1, paddleW: 80,
-      ability: '용암 피해 오르기 · 몇 초 버틸까',
-      hints: ['왼쪽 아래 ◀ ▶ 로 걷고, 오른쪽 아래 버튼으로 점프', '블록을 밟고 올라 용암을 피해요. 깔리면 끝 (2단 점프)'],
+      name: 'KID', fps: 15, mode: 'horde', speedMul: 1, paddleW: 80,
+      ability: '괴물 피하며 싸우기 · 몇 초 버틸까',
+      hints: ['화면 어디든 끌어서 이동, 공은 자동으로 던져요', '멈추면 두 배로 빨리 던져요. 괴물에 닿으면 체력 -1'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,
