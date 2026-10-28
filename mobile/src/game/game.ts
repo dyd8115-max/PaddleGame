@@ -298,8 +298,9 @@ export class Game {
         this.events_.push(killed ? 'brickBreak' : 'brickHit');
         if (killed) this.score_ += 10;
       },
-      hurt: () => this.events_.push('hurt'),
+      tileBreak: () => this.events_.push('hurt'),
       levelUp: () => this.events_.push('levelUp'),
+      fall: () => this.events_.push('itemBad'),
       gameOver: () => this.endGame('gameover'),
     });
   }

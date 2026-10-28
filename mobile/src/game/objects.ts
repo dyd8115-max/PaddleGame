@@ -12,7 +12,7 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 export const PLAYER_SCALE = 1.5;
 
 // 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
-// horde:    사방에서 몰려오는 괴물을 피하며 자동으로 공을 던져 잡음. 버틴 시간 (꼬마)
+// horde:    가운데 블록 뭉치 위에서 사방의 괴물로부터 블록을 지킴. 떨어지면 끝. 버틴 시간 (꼬마)
 // climb:    떨어지는 테트리스 블록을 밟고 올라 차오르는 용암을 피함. 버틴 시간 (지금은 쓰지 않음)
 // mine:     지뢰 벽돌깨기 (지금은 쓰지 않음)
 // swipe:    직접 조준해서 쏘는 스와이프 벽돌깨기. 몇 라운드까지 갔나 (엘프)
@@ -38,8 +38,8 @@ export const Characters = {
   List: [
     {
       name: 'KID', fps: 15, mode: 'horde', speedMul: 1, paddleW: 80,
-      ability: '괴물 피하며 싸우기 · 몇 초 버틸까',
-      hints: ['화면 어디든 끌어서 이동, 공은 자동으로 던져요', '멈추면 두 배로 빨리 던져요. 괴물에 닿으면 체력 -1'],
+      ability: '블록 지키기 · 몇 초 버틸까',
+      hints: ['화면 어디든 끌어서 이동, 공은 자동으로 던져요', '괴물이 블록을 갉아먹어요. 서 있는 블록이 부서지면 끝'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,

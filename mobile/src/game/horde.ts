@@ -1,49 +1,61 @@
-// 꼬마 모드: 사방에서 몰려오는 괴물 피하며 싸우기 (타임어택)
+// 꼬마 모드: 블록 뭉치 지키기 (타임어택)
 //
-// - 화면 어디든 누른 채 끌면 꼬마가 그 방향으로 움직인다 (게임 화면 안에서 자유 이동)
-// - 꼬마는 가장 가까운 괴물에게 공을 자동으로 던진다. 멈춰 있으면 두 배로 빨리 던진다
-// - 괴물은 화면 네 변 밖에서 나타나 꼬마에게 다가온다. 시간이 지날수록 더 많이, 더 단단하게
-//   슬라임(느림), 박쥐(빠르고 흔들림), 눈알(멀리서 탄을 쏨), 덩치(크고 단단함)
-// - 괴물에 닿거나 탄에 맞으면 체력 -1, 잠깐 무적. 체력이 0 이 되면 끝
-// - 괴물을 잡으면 경험치. 레벨이 오르면 스킬 3개 중 하나를 고른다 (궁수 모드와 같은 스킬)
-// - 기록은 버틴 시간
-import { Vec2 } from './geometry';
+// - 화면 가운데에 블록 뭉치가 떠 있고, 꼬마는 그 위에 서 있다. 블록 바깥은 낭떠러지
+// - 화면 어디든 누른 채 끌면 꼬마가 그 방향으로 움직인다 (블록 위로만 다닐 수 있음)
+// - 꼬마는 가장 가까운 괴물에게 공을 자동으로 던진다. 멈춰 있으면 1.5배 빨리 던진다
+// - 괴물은 화면 네 변 밖에서 날아와 블록을 갉아먹는다. 꼬마를 직접 공격하지는 않는다
+//   슬라임(느림), 박쥐(빠르고 흔들림, 꼬마가 선 블록을 노림), 눈알(멀리서 꼬마가 선 블록에 탄을 쏨), 덩치(크고 단단하고 많이 갉아먹음)
+// - 꼬마가 서 있는 블록이 부서지면 떨어져서 끝. 기록은 버틴 시간
+// - 괴물을 잡으면 경험치. 레벨이 오르면 스킬 3개 중 하나를 고른다 (궁수 모드 스킬, 체력 회복 대신 블록 복구)
+import { Rect, Vec2 } from './geometry';
 import { Characters, World } from './objects';
 import { SKILLS, type SkillId } from './archer';
 
 export interface HordeHost {
   hit(killed: boolean): void;
-  hurt(): void;
+  tileBreak(): void;
   levelUp(): void;
+  fall(): void;
   gameOver(): void;
 }
 
-export const KID_SCALE = 0.75;          // 꼬마 그림 크기 (캐릭터 칸 기준)
+export const KID_SCALE = 0.95;          // 꼬마 그림 크기 (캐릭터 칸 기준)
 export const KID_DRAW_W = Characters.CellW * KID_SCALE;
 export const KID_DRAW_H = Characters.CellH * KID_SCALE;
-const KID_R = 14;                       // 꼬마 몸 판정 반지름
-const MOVE_SPEED = 260;
+const MOVE_SPEED = 220;
 const JOY_DEAD = 8;
 const JOY_FULL = 44;
 export const SHOT_SPEED = 620;
 export const SHOT_R = 6;
-const SHOT_LIFE = 1.1;                  // 던진 공은 이 시간이 지나면 사라짐 (화면이 공으로 뒤덮이지 않게)
-const FIRE_EVERY = 0.55;                // 움직일 때 던지는 간격 (멈추면 절반)
+const SHOT_LIFE = 1.1;                  // 던진 공은 이 시간이 지나면 사라짐
+const FIRE_EVERY = 0.5;                 // 움직일 때 던지는 간격 (멈추면 1.5배 빨리)
 const MULTI_GAP = 0.12;
-const BULLET_R = 5;
-const HURT_INVULN = 1.2;
-const START_HP = 3;
 const MAX_MONSTERS = 90;
+const FALL_TIME = 0.8;                  // 떨어지는 모습 보여 주는 시간
+
+export const TILE = 44;                 // 블록 한 칸
+export const TILE_COLS = 7;
+export const TILE_ROWS = 7;
+export const TILE_HP = 10;
+const BULLET_DMG = 2;
+const REPAIR_COUNT = 8;
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 export type MonsterKind = 'slime' | 'bat' | 'eye' | 'brute';
-const KINDS: Record<MonsterKind, { r: number; speed: number; hp: number; xp: number }> = {
-  slime: { r: 15, speed: 48, hp: 2, xp: 1 },
-  bat: { r: 12, speed: 105, hp: 1, xp: 1 },
-  eye: { r: 15, speed: 60, hp: 3, xp: 2 },
-  brute: { r: 28, speed: 32, hp: 14, xp: 5 },
+const KINDS: Record<MonsterKind, { r: number; speed: number; hp: number; xp: number; bite: number }> = {
+  slime: { r: 15, speed: 46, hp: 2, xp: 1, bite: 1.2 },
+  bat: { r: 12, speed: 100, hp: 1, xp: 1, bite: 0.8 },
+  eye: { r: 15, speed: 55, hp: 3, xp: 2, bite: 0 },
+  brute: { r: 28, speed: 30, hp: 14, xp: 5, bite: 4 },
 };
+
+// 이 모드에서는 체력 회복 대신 블록 복구
+export function hordeSkill(id: SkillId): { name: string; desc: string } {
+  if (id === 'heal') return { name: '블록 복구', desc: `부서진 블록 ${REPAIR_COUNT}개를 되살리고 금 간 블록을 고쳐요` };
+  const s = SKILLS[id];
+  return { name: s.name.replace('화살', '공'), desc: s.desc.replace('화살', '공') };   // 꼬마는 화살 대신 공
+}
 
 export class Monster {
   hp: number;
@@ -51,6 +63,9 @@ export class Monster {
   flash = 0;              // 맞으면 잠깐 하얗게
   fireTimer = rand(1.5, 3);
   phase = Math.random() * Math.PI * 2;
+  target = -1;            // 노리는 블록 번호
+  biting = false;
+  retarget = 0;
   constructor(public kind: MonsterKind, public pos: Vec2, hpMul: number) {
     this.hp = this.maxHp = Math.max(1, Math.round(KINDS[kind].hp * hpMul));
   }
@@ -68,18 +83,18 @@ export interface Bullet { pos: Vec2; vel: Vec2; }
 export class Horde {
   time = 0;
   kills = 0;
-  hp = START_HP;
-  maxHp = START_HP;
   level = 1;
   xp = 0;
   skills: Partial<Record<SkillId, number>> = {};
   choosing: SkillId[] | null = null;
+  tiles: number[] = Array(TILE_COLS * TILE_ROWS).fill(TILE_HP);   // 블록 체력, 0 이면 부서짐
+  tileFlash: number[] = Array(TILE_COLS * TILE_ROWS).fill(0);
 
-  x = World.Width / 2;
-  y = World.Height / 2;
+  x = World.Width / 2;       // 꼬마 발 위치
+  y = World.Height / 2 + TILE * 0.3;
   moving = false;
   vx = 0;
-  invuln = 0;
+  falling = 0;               // 0 보다 크면 떨어지는 중
 
   monsters: Monster[] = [];
   shots: Shot[] = [];
@@ -87,6 +102,7 @@ export class Horde {
 
   joyFrom: Vec2 | null = null;
   joyTo = new Vec2();
+  keyDir = new Vec2();   // PC 방향키
 
   private spawnTimer = 0.8;
   private fireTimer = 0.4;
@@ -94,26 +110,41 @@ export class Horde {
   private multiTimer = 0;
   private multiDir = new Vec2(0, -1);
   private waveTimer = 20;
+  private over = false;
 
   constructor(private host: HordeHost) {}
 
   get xpNeed(): number { return 3 + this.level * 3; }
   get damage(): number { return 1 + (this.skills.power ?? 0); }
-  // 시간에 따라: 나오는 간격은 짧아지고 체력은 늘어남
-  get spawnEvery(): number { return Math.max(0.15, 1.1 - this.time * 0.012); }
+  get spawnEvery(): number { return Math.max(0.2, 1.2 - this.time * 0.011); }
   get hpMul(): number { return 1 + this.time / 25 + (this.time / 60) ** 2; }
+  get tilesLeft(): number { return this.tiles.filter((h) => h > 0).length; }
+
+  // ---------- 블록 ----------
+  get boardLeft(): number { return (World.Width - TILE * TILE_COLS) / 2; }
+  get boardTop(): number { return (World.Height - TILE * TILE_ROWS) / 2; }
+  tileRect(i: number): Rect {
+    return new Rect(this.boardLeft + (i % TILE_COLS) * TILE, this.boardTop + Math.floor(i / TILE_COLS) * TILE, TILE, TILE);
+  }
+  tileAt(x: number, y: number): number {
+    const c = Math.floor((x - this.boardLeft) / TILE), r = Math.floor((y - this.boardTop) / TILE);
+    if (c < 0 || c >= TILE_COLS || r < 0 || r >= TILE_ROWS) return -1;
+    return r * TILE_COLS + c;
+  }
+  private solidAt(x: number, y: number): boolean {
+    const i = this.tileAt(x, y);
+    return i >= 0 && this.tiles[i] > 0;
+  }
 
   // ---------- 조작 ----------
   joyBegin(x: number, y: number): void { this.joyFrom = new Vec2(x, y); this.joyTo = new Vec2(x, y); }
   joyMove(x: number, y: number): void { if (this.joyFrom) this.joyTo = new Vec2(x, y); }
   joyEnd(): void { this.joyFrom = null; }
-  keyDir = new Vec2();   // PC 방향키
 
-  cardRect(i: number): { x: number; y: number; w: number; h: number; contains(x: number, y: number): boolean } {
+  cardRect(i: number): Rect {
     const w = 140, h = 170, gap = 10;
     const left = (World.Width - (w * 3 + gap * 2)) / 2;
-    const r = { x: left + i * (w + gap), y: World.Height * 0.32, w, h };
-    return { ...r, contains: (px: number, py: number) => px >= r.x && px <= r.x + w && py >= r.y && py <= r.y + h };
+    return new Rect(left + i * (w + gap), World.Height * 0.32, w, h);
   }
 
   pick(x: number, y: number): boolean {
@@ -122,11 +153,24 @@ export class Horde {
       if (!this.cardRect(i).contains(x, y)) continue;
       const id = this.choosing[i];
       this.skills[id] = (this.skills[id] ?? 0) + 1;
-      if (id === 'heal') { this.maxHp++; this.hp = this.maxHp; }
+      if (id === 'heal') this.repair();
       this.choosing = null;
       return true;
     }
     return false;
+  }
+
+  // 부서진 블록 몇 개 되살리기 (꼬마와 가까운 것부터), 금 간 블록은 모두 고침
+  private repair(): void {
+    const broken = this.tiles.map((_, i) => i).filter((i) => this.tiles[i] <= 0)
+      .sort((a, b) => this.distToTile(a) - this.distToTile(b)).slice(0, REPAIR_COUNT);
+    for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i] > 0) this.tiles[i] = TILE_HP;
+    for (const i of broken) this.tiles[i] = TILE_HP;
+  }
+
+  private distToTile(i: number): number {
+    const r = this.tileRect(i);
+    return Math.hypot(r.centerX - this.x, r.centerY - this.y);
   }
 
   private offerSkills(): void {
@@ -138,16 +182,26 @@ export class Horde {
 
   // ---------- 매 프레임 ----------
   update(dt: number): void {
+    if (this.over) return;
+    if (this.falling > 0) {   // 떨어지는 중: 다른 건 멈춤
+      this.falling -= dt;
+      if (this.falling <= 0) { this.over = true; this.host.gameOver(); }
+      return;
+    }
     if (this.choosing) return;
     this.time += dt;
-    this.invuln = Math.max(0, this.invuln - dt);
+    for (let i = 0; i < this.tileFlash.length; i++) this.tileFlash[i] = Math.max(0, this.tileFlash[i] - dt);
     this.moveKid(dt);
     this.spawn(dt);
     this.updateMonsters(dt);
     this.updateShooting(dt);
     this.updateShots(dt);
     this.updateBullets(dt);
-    if (this.hp <= 0) this.host.gameOver();
+    if (!this.solidAt(this.x, this.y)) {   // 발 밑 블록이 부서짐 → 떨어짐
+      this.falling = FALL_TIME;
+      this.joyFrom = null;
+      this.host.fall();
+    }
   }
 
   private moveKid(dt: number): void {
@@ -165,9 +219,13 @@ export class Horde {
     }
     this.moving = vx !== 0 || vy !== 0;
     this.vx = vx;
-    const mx = KID_DRAW_W / 2, top = KID_DRAW_H / 2 + 4;
-    this.x = Math.max(mx, Math.min(World.Width - mx, this.x + vx * dt));
-    this.y = Math.max(top, Math.min(World.Height - KID_DRAW_H / 2, this.y + vy * dt));
+    // 블록 위로만: 가려는 곳이 낭떠러지면 그 방향으로는 안 감 (가장자리에서 조금 안쪽까지만)
+    const m = 6;
+    const ok = (x: number, y: number) => this.solidAt(x + m, y) && this.solidAt(x - m, y) && this.solidAt(x, y + m) && this.solidAt(x, y - m);
+    const nx = this.x + vx * dt;
+    if (ok(nx, this.y)) this.x = nx;
+    const ny = this.y + vy * dt;
+    if (ok(this.x, ny)) this.y = ny;
   }
 
   // 네 변 중 한 곳, 화면 바로 바깥에서 나옴
@@ -184,8 +242,8 @@ export class Horde {
   private pickKind(): MonsterKind {
     const t = this.time, r = Math.random();
     if (t > 40 && r < 0.08) return 'brute';
-    if (t > 15 && r < 0.25) return 'eye';
-    if (t > 5 && r < 0.5) return 'bat';
+    if (t > 15 && r < 0.2) return 'eye';
+    if (t > 5 && r < 0.45) return 'bat';
     return 'slime';
   }
 
@@ -211,29 +269,65 @@ export class Horde {
     }
   }
 
+  // 괴물에게서 가장 가까운 살아 있는 블록
+  private nearestTile(p: Vec2): number {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < this.tiles.length; i++) {
+      if (this.tiles[i] <= 0) continue;
+      const r = this.tileRect(i);
+      const d = Math.hypot(r.centerX - p.x, r.centerY - p.y);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  private damageTile(i: number, dmg: number, flash = false): void {
+    if (i < 0 || this.tiles[i] <= 0) return;
+    this.tiles[i] -= dmg;
+    if (flash) this.tileFlash[i] = 0.12;
+    if (this.tiles[i] <= 0) { this.tiles[i] = 0; this.host.tileBreak(); }
+  }
+
   private updateMonsters(dt: number): void {
-    const kid = new Vec2(this.x, this.y);
     for (const m of this.monsters) {
       m.flash = Math.max(0, m.flash - dt);
       const k = KINDS[m.kind];
-      const dx = kid.x - m.pos.x, dy = kid.y - m.pos.y, d = Math.hypot(dx, dy) || 1;
-      let sp = k.speed * Math.min(2, 1 + this.time / 90);
-      let ux = dx / d, uy = dy / d;
-      if (m.kind === 'bat') {   // 지그재그
-        m.phase += dt * 6;
-        const s = Math.sin(m.phase) * 0.8;
-        ux += -uy * s; uy += (dx / d) * s;
-        const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
+      m.retarget -= dt;
+      if (m.target < 0 || this.tiles[m.target] <= 0 || m.retarget <= 0) {
+        // 박쥐와 눈알은 꼬마가 서 있는 블록을 노리고, 나머지는 가장 가까운 블록을 갉아먹음
+        const under = this.tileAt(this.x, this.y);
+        m.target = (m.kind === 'bat' || m.kind === 'eye') && under >= 0 && this.tiles[under] > 0 ? under : this.nearestTile(m.pos);
+        m.retarget = m.kind === 'bat' ? 0.4 : 1;
       }
-      if (m.kind === 'eye') {   // 거리를 두고 탄을 쏨
+      if (m.target < 0) continue;
+      const tr = this.tileRect(m.target);
+      // 블록 가장자리의 가장 가까운 점을 향해
+      const gx = Math.max(tr.left, Math.min(tr.right, m.pos.x)), gy = Math.max(tr.top, Math.min(tr.bottom, m.pos.y));
+      const dx = gx - m.pos.x, dy = gy - m.pos.y, d = Math.hypot(dx, dy);
+      let sp = k.speed * Math.min(1.8, 1 + this.time / 100);
+      let ux = d > 0 ? dx / d : 0, uy = d > 0 ? dy / d : 0;
+      m.biting = false;
+
+      if (m.kind === 'eye') {   // 거리를 두고 블록에 탄을 쏨
         const inside = m.pos.x > 10 && m.pos.x < World.Width - 10 && m.pos.y > 10 && m.pos.y < World.Height - 10;
-        if (d < 170 && inside) sp = -sp * 0.5; else if (d < 220 && inside) sp = 0;
+        if (d < 110 && inside) sp = -sp * 0.5; else if (d < 160 && inside) sp = 0;
         m.fireTimer -= dt;
         if (m.fireTimer <= 0 && inside) {
           m.fireTimer = rand(2.2, 3.2);
-          const bs = Math.min(260, 170 + this.time * 0.6);
-          this.bullets.push({ pos: new Vec2(m.pos.x, m.pos.y), vel: new Vec2(dx / d * bs, dy / d * bs) });
+          const cx = tr.centerX - m.pos.x, cy = tr.centerY - m.pos.y, cd = Math.hypot(cx, cy) || 1;
+          const bs = Math.min(240, 160 + this.time * 0.5);
+          this.bullets.push({ pos: new Vec2(m.pos.x, m.pos.y), vel: new Vec2(cx / cd * bs, cy / cd * bs) });
         }
+      } else if (d < m.r * 0.6) {   // 블록에 붙어서 갉아먹음
+        sp = 0;
+        m.biting = true;
+        this.damageTile(m.target, k.bite * dt * Math.min(2, 1 + this.time / 120));
+      } else if (m.kind === 'bat') {   // 지그재그
+        m.phase += dt * 6;
+        const s = Math.sin(m.phase) * 0.7;
+        const ox = ux;
+        ux += -uy * s; uy += ox * s;
+        const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
       }
       m.pos = new Vec2(m.pos.x + ux * sp * dt, m.pos.y + uy * sp * dt);
     }
@@ -248,12 +342,6 @@ export class Horde {
         b.pos = new Vec2(b.pos.x + ux * push, b.pos.y + uy * push);
       }
     }
-    // 닿으면 체력 -1
-    if (this.invuln <= 0) {
-      for (const m of ms) {
-        if (Math.hypot(m.pos.x - this.x, m.pos.y - this.y) < m.r + KID_R) { this.damageKid(); break; }
-      }
-    }
   }
 
   private updateShooting(dt: number): void {
@@ -261,11 +349,12 @@ export class Horde {
       this.multiTimer -= dt;
       if (this.multiTimer <= 0) { this.volley(this.multiDir); this.multiLeft--; this.multiTimer = MULTI_GAP; }
     }
-    this.fireTimer -= dt * (this.moving ? 1 : 2);   // 멈추면 두 배로 빨리
+    this.fireTimer -= dt * (this.moving ? 1 : 1.5);   // 멈추면 1.5배 빨리
     if (this.fireTimer > 0) return;
-    const t = this.nearest(new Vec2(this.x, this.y), null, 520);
+    const t = this.nearest(this.shotOrigin(), null, 560);
     if (!t) return;
-    const dx = t.pos.x - this.x, dy = t.pos.y - this.y, len = Math.hypot(dx, dy) || 1;
+    const o = this.shotOrigin();
+    const dx = t.pos.x - o.x, dy = t.pos.y - o.y, len = Math.hypot(dx, dy) || 1;
     const dir = new Vec2(dx / len, dy / len);
     this.volley(dir);
     this.multiDir = dir;
@@ -274,8 +363,10 @@ export class Horde {
     this.fireTimer = FIRE_EVERY / (1 + 0.25 * (this.skills.speed ?? 0));
   }
 
+  shotOrigin(): Vec2 { return new Vec2(this.x, this.y - KID_DRAW_H * 0.45); }
+
   private volley(dir: Vec2): void {
-    const from = new Vec2(this.x, this.y);
+    const from = this.shotOrigin();
     const front = 1 + (this.skills.front ?? 0);
     const px = -dir.y, py = dir.x;
     for (let i = 0; i < front; i++) {
@@ -343,7 +434,6 @@ export class Horde {
     s.hit.add(m);
     m.hp -= s.dmg;
     m.flash = 0.08;
-    // 맞으면 살짝 밀려남
     const l = s.vel.length() || 1;
     const kb = m.kind === 'brute' ? 4 : 10;
     m.pos = new Vec2(m.pos.x + s.vel.x / l * kb, m.pos.y + s.vel.y / l * kb);
@@ -376,29 +466,16 @@ export class Horde {
     }
   }
 
+  // 눈알 탄: 처음 닿는 블록에 피해
   private updateBullets(dt: number): void {
     const keep: Bullet[] = [];
     for (const b of this.bullets) {
       b.pos = b.pos.add(b.vel.scale(dt));
       if (b.pos.x < -20 || b.pos.x > World.Width + 20 || b.pos.y < -20 || b.pos.y > World.Height + 20) continue;
-      if (Math.hypot(b.pos.x - this.x, b.pos.y - this.y) < KID_R + BULLET_R && this.invuln <= 0) {
-        this.damageKid();
-        continue;
-      }
+      const i = this.tileAt(b.pos.x, b.pos.y);
+      if (i >= 0 && this.tiles[i] > 0) { this.damageTile(i, BULLET_DMG, true); continue; }
       keep.push(b);
     }
     this.bullets = keep;
-  }
-
-  private damageKid(): void {
-    if (this.invuln > 0) return;
-    this.hp--;
-    this.invuln = HURT_INVULN;
-    this.host.hurt();
-    // 맞으면 가까운 괴물을 조금 밀어냄 (연달아 맞지 않게)
-    for (const m of this.monsters) {
-      const dx = m.pos.x - this.x, dy = m.pos.y - this.y, d = Math.hypot(dx, dy) || 1;
-      if (d < 90) m.pos = new Vec2(m.pos.x + dx / d * (90 - d), m.pos.y + dy / d * (90 - d));
-    }
   }
 }
