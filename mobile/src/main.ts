@@ -102,6 +102,7 @@ function pause(): void {
   game.swipe?.aimCancel();
   game.archer?.joyEnd();
   game.horde?.joyEnd();
+  game.claim?.joyEnd();
   if (game.horde) game.horde.keyDir = new Vec2();
   climbHeld.clear();
   game.climb?.release();
@@ -172,7 +173,6 @@ function swipeActive(): boolean { return game.state === 'playing' && overlay ===
 // 엘프 모드: 끌어서 이동, 레벨업 카드 고르기
 // 꼬마 땅따먹기: 밀어서 방향 바꾸기
 function claimActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.claim !== null; }
-let claimFrom: { x: number; y: number } | null = null;
 // 꼬마 모드(괴물)도 같은 조작
 function joyMode() { return game.archer ?? game.horde; }
 function archerActive(): boolean { return game.state === 'playing' && overlay === 'none' && joyMode() !== null; }
@@ -193,7 +193,7 @@ canvas.addEventListener('pointerdown', (e) => {
   flagTap = false;
   if (claimActive()) {
     if (hudSoundRect().contains(lx(e), ly(e))) { toggleMute(); return; }
-    claimFrom = { x: lx(e), y: ly(e) };
+    game.claim!.joyBegin(lx(e), ly(e));
     return;
   }
 
@@ -227,14 +227,8 @@ canvas.addEventListener('pointermove', (e) => {
   // 마우스는 누르지 않아도 따라오고, 터치는 누른 손가락만
   if (e.pointerType === 'touch' && e.pointerId !== activePointer) return;
   if (claimActive()) {
-    // 땅따먹기: 누른 채 일정 거리 밀면 그 방향으로 (계속 밀면서 방향을 바꿀 수 있게 기준점을 옮김)
-    if (e.pointerId === activePointer && claimFrom) {
-      const dx = lx(e) - claimFrom.x, dy = ly(e) - claimFrom.y;
-      if (Math.hypot(dx, dy) > 22) {
-        if (Math.abs(dx) > Math.abs(dy)) game.claim!.setDir(Math.sign(dx), 0); else game.claim!.setDir(0, Math.sign(dy));
-        claimFrom = { x: lx(e), y: ly(e) };
-      }
-    }
+    // 땅따먹기: 누른 채 끌면 그 방향으로 걷고, 떼면 멈춤
+    if (e.pointerId === activePointer) game.claim!.joyMove(lx(e), ly(e));
     return;
   }
   if (archerActive()) {
@@ -280,7 +274,7 @@ function endPointer(e: PointerEvent): void {
   if (e.pointerId !== activePointer) return;
   activePointer = -1;
 
-  if (claimActive()) { claimFrom = null; return; }
+  if (claimActive()) { game.claim!.joyEnd(); return; }
   if (archerActive()) { joyMode()!.joyEnd(); return; }
   if (swipeActive()) {
     if (e.type === 'pointerup') game.swipe!.aimRelease();
@@ -306,11 +300,11 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowRight') game.moveSelection(1);
     else if (e.key >= '1' && e.key <= '3') game.selectCharacter(Number(e.key) - 1);
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
-  else if (game.claim && overlay === 'none') {   // 땅따먹기: 방향키
-    if (e.key === 'ArrowLeft') game.claim.setDir(-1, 0);
-    else if (e.key === 'ArrowRight') game.claim.setDir(1, 0);
-    else if (e.key === 'ArrowUp') game.claim.setDir(0, -1);
-    else if (e.key === 'ArrowDown') game.claim.setDir(0, 1);
+  else if (game.claim && overlay === 'none') {   // 땅따먹기: 방향키를 누르고 있는 동안 걸음
+    if (e.key === 'ArrowLeft') game.claim.hold(-1, 0);
+    else if (e.key === 'ArrowRight') game.claim.hold(1, 0);
+    else if (e.key === 'ArrowUp') game.claim.hold(0, -1);
+    else if (e.key === 'ArrowDown') game.claim.hold(0, 1);
   }
   else if (game.horde && overlay === 'none') {   // 꼬마: 방향키로 이동
     const k = game.horde.keyDir;
@@ -326,6 +320,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (game.claim && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) game.claim.hold(0, 0);
   if (game.horde) {
     const k = game.horde.keyDir;
     if ((e.key === 'ArrowLeft' && k.x < 0) || (e.key === 'ArrowRight' && k.x > 0)) k.x = 0;
