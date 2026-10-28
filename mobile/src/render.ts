@@ -612,10 +612,10 @@ function wrapText(ctx: Ctx, s: string, cx: number, y: number, maxW: number, size
   lines.forEach((ln, i) => text(ctx, ln, cx, y + i * (size + 5), size, color));
 }
 
-// 엘프 모드 벽돌 색: 화면에서 숫자가 클수록 초록 → 노랑 → 빨강
+// 엘프 모드 벽돌 색: 화면에서 숫자가 클수록 초록 → 노랑 → 주황 (빨강은 마지막 줄 표시용으로 남겨 둠)
 function hpColor(hp: number, maxHp: number): string {
   const t = maxHp <= 1 ? 0 : Math.min(1, (hp - 1) / (maxHp - 1));
-  return `hsl(${Math.round(135 - t * 135)}, 62%, 56%)`;
+  return `hsl(${Math.round(135 - t * 105)}, 62%, 56%)`;
 }
 
 function drawSwipe(ctx: Ctx, game: Game, v: View): void {
@@ -626,17 +626,15 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   ctx.fillRect(0, floor, World.Width, 1.5);
 
-  // 엘프: 발은 바닥에, 머리 꼭대기는 끝나는 높이에 딱 맞게 키워서 그림 (벽돌이 머리에 닿으면 끝)
   const p = game.player;
-  const feet = p.y + p.h, eh = feet - s.deathY, ew = eh * (Characters.CellW / Characters.CellH);
-  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(p.x + p.w / 2 - ew / 2, s.deathY, ew, eh));
+  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, p.bounds());
 
   const maxHp = s.bricks.reduce((m, k) => Math.max(m, k.hp), 1);
   const blink = 0.5 + 0.5 * Math.sin(v.time * 8);
   for (const k of s.bricks) {
     const r = s.drawRect(k.col, k.row);
     roundRect(ctx, r, 6);
-    ctx.fillStyle = hpColor(k.hp, maxHp);
+    ctx.fillStyle = k.row >= s.lastRow ? '#e8403a' : hpColor(k.hp, maxHp);   // 마지막 줄 벽돌은 빨갛게 (한 줄만 더 내려오면 끝)
     ctx.fill();
     // 다음에 줄이 내려오면 선을 넘는 벽돌: 빨간 테두리가 깜빡임
     if (s.phase === 'aim' && s.inDanger(k)) {
@@ -653,7 +651,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
       ctx.fillRect(r.right - 20, r.y + 2, 18, 13);
       text(ctx, '+1', r.right - 11, r.y + 9, 10, WHITE, { bold: true });
     }
-    text(ctx, String(k.hp), r.centerX, r.centerY + 2, k.hp >= 100 ? 15 : 18, '#1e2232', { bold: true });
+    text(ctx, String(k.hp), r.centerX, r.centerY + 2, k.hp >= 100 ? 15 : 18, k.row >= s.lastRow ? WHITE : '#1e2232', { bold: true });
   }
 
   for (const b of s.balls) outlinedRect(ctx, b.bounds(), WHITE);
