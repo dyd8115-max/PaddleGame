@@ -6,6 +6,7 @@ import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMod
 import { SKILLS, type SkillId } from './game/archer';
 import { KID_DRAW_H, KID_DRAW_W, SHOT_R, TILE_HP, hordeSkill, type Monster } from './game/horde';
 import { CELL, KID_H, KID_W, LAVA_DELAY, PIECE_COLORS } from './game/climb';
+import { BALL_R, CC, COLS as CLAIM_COLS, GOAL, LAND, TRAIL } from './game/claim';
 
 const ARROW_SPEED_DRAW = 720;   // 화살 꼬리 길이 계산용 (archer.ts 의 화살 빠르기)
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
@@ -156,7 +157,7 @@ function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): 
 // 기록 글자: 엘프는 라운드, 꼬마·성녀는 버틴 시간
 function formatRecord(mode: GameMode, v: number): string {
   if (mode === 'swipe') return `ROUND ${v}`;
-  if (mode === 'archer') return `STAGE ${v}`;
+  if (mode === 'archer' || mode === 'claim') return `STAGE ${v}`;
   if (mode === 'survival' || mode === 'climb' || mode === 'horde') {
     if (v < 60) return `${v.toFixed(1)}초`;
     return `${Math.floor(v / 60)}분 ${(v % 60).toFixed(1).padStart(4, '0')}초`;
@@ -175,6 +176,85 @@ function drawBlock(ctx: Ctx, r: Rect, color: string, alpha = 1): void {
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.fillRect(r.x + 1, r.bottom - 5, r.w - 2, 4);
   ctx.globalAlpha = 1;
+}
+
+// ---------- 꼬마 땅따먹기 ----------
+function drawClaim(ctx: Ctx, game: Game, v: View): void {
+  const c = game.claim!;
+  ctx.save();
+  ctx.translate(0, c.top);
+  const H = c.boardH;
+  // 바다: 배경을 어둡게
+  ctx.fillStyle = 'rgba(6,8,20,0.55)';
+  ctx.fillRect(0, 0, World.Width, H);
+  // 땅: 줄마다 이어진 칸을 한 번에. 벽돌 무늬
+  ctx.fillStyle = '#c9785a';
+  for (let r = 0; r < c.rows; r++) {
+    let c0 = -1;
+    for (let col = 0; col <= CLAIM_COLS; col++) {
+      const land = col < CLAIM_COLS && c.cells[r * CLAIM_COLS + col] === LAND;
+      if (land && c0 < 0) c0 = col;
+      if (!land && c0 >= 0) { ctx.fillRect(c0 * CC, r * CC, (col - c0) * CC, CC); c0 = -1; }
+    }
+  }
+  // 벽돌 이음매 (두 줄에 한 번 가로줄, 엇갈린 세로줄)
+  ctx.fillStyle = 'rgba(70,30,20,0.35)';
+  for (let r = 0; r < c.rows; r++) {
+    for (let col = 0; col < CLAIM_COLS; col++) {
+      if (c.cells[r * CLAIM_COLS + col] !== LAND) continue;
+      if (r % 2 === 0) ctx.fillRect(col * CC, r * CC, CC, 1);
+      if ((col + (Math.floor(r / 2) % 2) * 2) % 4 === 0) ctx.fillRect(col * CC, r * CC, 1, CC);
+    }
+  }
+  // 방금 차지한 곳 반짝
+  if (c.flash.t > 0) {
+    ctx.fillStyle = `rgba(255,255,220,${c.flash.t * 1.6})`;
+    for (const i of c.flash.idx) ctx.fillRect((i % CLAIM_COLS) * CC, Math.floor(i / CLAIM_COLS) * CC, CC, CC);
+  }
+  // 선
+  ctx.fillStyle = '#ffe14d';
+  for (let i = 0; i < c.cells.length; i++) {
+    if (c.cells[i] === TRAIL) ctx.fillRect((i % CLAIM_COLS) * CC + 2, Math.floor(i / CLAIM_COLS) * CC + 2, CC - 4, CC - 4);
+  }
+  // 공: 바다 공은 하양, 땅 공은 검정
+  for (const b of c.balls) {
+    ctx.fillStyle = b.land ? '#1a1020' : WHITE;
+    ctx.fillRect(b.x - BALL_R, b.y - BALL_R, BALL_R * 2, BALL_R * 2);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = b.land ? '#ff5a5a' : 'rgba(0,0,0,0.6)';
+    ctx.strokeRect(b.x - BALL_R, b.y - BALL_R, BALL_R * 2, BALL_R * 2);
+  }
+  // 꼬마: 칸 가운데에 발. 맞으면 깜빡임
+  if (c.hurtTimer <= 0 || Math.floor(v.time * 12) % 2 === 0) {
+    const p = game.player;
+    const kh = 40, kw = kh * (Characters.CellW / Characters.CellH);
+    const fx = (c.kc + 0.5) * CC, fy = (c.kr + 0.5) * CC;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(fx, fy + 4, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
+    drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(fx - kw / 2, fy - kh + 6, kw, kh));
+  }
+  ctx.restore();
+
+  // 차지한 비율 막대 (맨 위), 목표 75% 표시
+  const pct = c.percent;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, World.Width, 8);
+  ctx.fillStyle = '#4ddc7a';
+  ctx.fillRect(0, 0, World.Width * Math.min(1, pct), 8);
+  ctx.fillStyle = WHITE;
+  ctx.fillRect(World.Width * GOAL - 1, 0, 2, 12);
+
+  const my = World.Height * 0.42;
+  if (c.clearTimer > 0) {
+    text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
+    text(ctx, '다음 스테이지는 공이 하나 더', World.Width / 2, my + 40, 16, '#dcdce6');
+  } else if (c.stage === 1 && c.stageTime < 4) {
+    text(ctx, '밀어서 달리고, 선으로 막아 땅을 차지!', World.Width / 2, my, 19, WHITE, { bold: true });
+    text(ctx, '공이 없는 쪽이 꼬마 땅이 돼요. 75% 면 클리어', World.Width / 2, my + 30, 15, '#dcdce6');
+    text(ctx, '선을 긋는 중에 공이 닿으면 목숨 -1', World.Width / 2, my + 54, 15, '#ffb0b0');
+  } else if (c.stage === 3 && c.stageTime < 3) {
+    text(ctx, '검은 공은 땅 위를 굴러다녀요!', World.Width / 2, my, 20, '#ff9a9a', { bold: true });
+  }
 }
 
 function drawClimb(ctx: Ctx, game: Game, v: View): void {
@@ -761,6 +841,7 @@ function drawSwipe(ctx: Ctx, game: Game, v: View): void {
 
 function drawPlaying(ctx: Ctx, game: Game, v: View): void {
   if (game.climb) { drawClimb(ctx, game, v); return; }
+  if (game.claim) { drawClaim(ctx, game, v); return; }
   if (game.horde) { drawHorde(ctx, game, v); return; }
   if (game.archer) { drawArcher(ctx, game, v); return; }
   if (game.swipe) { drawSwipe(ctx, game, v); return; }
@@ -985,7 +1066,8 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = game.horde ? `처치 ${game.horde.kills} · 블록 ${game.horde.tilesLeft}개${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
+    const sub = game.claim ? `${Math.floor(game.claim.percent * 100)}% / ${GOAL * 100}% · 목숨 ${'♥'.repeat(Math.max(0, game.claim.lives))}`
+      : game.horde ? `처치 ${game.horde.kills} · 블록 ${game.horde.tilesLeft}개${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
       : game.climb ? `높이 ${game.climb.best}칸${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
       : mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`
       : sw ? `공 ${sw.ballCount}개 · 다음 ${sw.nextRows}줄 내려옴`
@@ -1038,7 +1120,8 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
   if (game.state === 'playing' && v.overlay === 'none' && l.touch.h > 30) {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
-    const hint = game.horde ? '화면 어디든 끌어서 이동'
+    const hint = game.claim ? '화면을 상하좌우로 밀어서 방향 바꾸기'
+      : game.horde ? '화면 어디든 끌어서 이동'
       : game.climb ? '화면 어디든 누르면 점프 · 길게 누르면 높이'
       : game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
       : game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';

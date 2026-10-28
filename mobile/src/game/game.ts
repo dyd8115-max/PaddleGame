@@ -7,6 +7,7 @@ import { Swipe, type SwipeSave } from './swipe';
 import { Archer } from './archer';
 import { Climb } from './climb';
 import { Horde } from './horde';
+import { Claim } from './claim';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -113,6 +114,7 @@ export class Game {
   swipe: Swipe | null = null;   // 꼬마 모드일 때만
   archer: Archer | null = null; // 궁수 모드일 때만 (지금은 쓰지 않음)
   climb: Climb | null = null;   // 용암 오르기 (지금은 쓰지 않음)
+  claim: Claim | null = null;   // 꼬마 모드일 때만
   horde: Horde | null = null;   // 꼬마 모드일 때만
   private events_: GameEvent[] = [];
 
@@ -137,6 +139,7 @@ export class Game {
   // 지금 판의 기록: 꼬마는 라운드, 엘프는 스테이지, 성녀는 버틴 초
   get record(): number {
     if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
+    if (this.mode === 'claim') return this.claim ? this.claim.stage : this.lastRecord_;
     if (this.mode === 'horde') return this.horde ? Math.floor(this.horde.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'climb') return this.climb ? Math.floor(this.climb.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
@@ -235,8 +238,10 @@ export class Game {
     this.archer = null;
     this.climb = null;
     this.horde = null;
+    this.claim = null;
     this.hearts_ = MINE_HEARTS;
-    if (ch.mode === 'horde') this.startHorde();
+    if (ch.mode === 'claim') this.startClaim();
+    else if (ch.mode === 'horde') this.startHorde();
     else if (ch.mode === 'climb') this.startClimb();
     else if (ch.mode === 'swipe') this.startSwipe(save);
     else if (ch.mode === 'archer') this.startArcher();
@@ -286,7 +291,23 @@ export class Game {
     });
   }
 
-  // 꼬마 모드: 괴물 피하며 싸우기
+  // 꼬마 모드: 땅따먹기
+  private startClaim(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.claim = new Claim({
+      claim: (n) => { this.score_ += n; this.events_.push('brickBreak'); },
+      hurt: () => this.events_.push('hurt'),
+      stageClear: () => { this.score_ += 500; this.events_.push('stageClear'); },
+      gameOver: () => this.endGame('gameover'),
+    });
+  }
+
+  // 괴물 피하며 싸우기 (지금은 쓰지 않음)
   private startHorde(): void {
     this.balls = [];
     this.items = [];
@@ -377,6 +398,19 @@ export class Game {
 
     if (this.state_ !== 'playing') {
       this.menuTime_ += dt;
+      return;
+    }
+
+    if (this.claim) {
+      const c = this.claim;
+      c.update(dt);
+      if (this.claim) {
+        const p = this.player;
+        if (c.dir[0] !== 0) p.facingLeft = c.dir[0] < 0;
+        const was = p.walking;
+        p.walking = c.moving;
+        if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;
+      }
       return;
     }
 
@@ -866,6 +900,7 @@ export class Game {
     this.archer = null;
     this.climb = null;
     this.horde = null;
+    this.claim = null;
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');
