@@ -203,20 +203,46 @@ function drawClimb(ctx: Ctx, game: Game, v: View): void {
       if (k >= 0) drawBlock(ctx, c.cellRect(col, r), PIECE_COLORS[k]);
     }
   }
-  // 떨어질 자리 그림자, 떨어지는 블록
+  // 떨어지기 전 경고: 떨어질 칸들에 빨간 띠가 깜빡이고, 떨어질 자리에 빨간 테두리 그림자
   for (const p of c.pieces) {
-    if (p.y + 2 * CELL < top) continue;   // 아직 화면 위에 있는 블록은 그림자 없음
+    if (p.warn <= 0) continue;
     const lr = c.landRow(p);
-    for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellRect(p.col + cx, lr - cy), PIECE_COLORS[p.color], 0.22);
+    const blink = 0.5 + 0.5 * Math.sin(v.time * 22);
+    const cols = new Map<number, number>();   // 칸 → 그 칸에서 가장 아래 셀의 윗면
+    for (const [cx, cy] of p.cells) {
+      const cr = c.cellRect(p.col + cx, lr - cy);
+      cols.set(p.col + cx, Math.max(cols.get(p.col + cx) ?? -Infinity, cr.y));
+    }
+    for (const [col, yBottom] of cols) {
+      const g = ctx.createLinearGradient(0, top, 0, yBottom);
+      g.addColorStop(0, `rgba(255,60,60,${0.35 + 0.25 * blink})`);
+      g.addColorStop(1, 'rgba(255,60,60,0.06)');
+      ctx.fillStyle = g;
+      ctx.fillRect(col * CELL + 2, top, CELL - 4, yBottom - top);
+    }
+    for (const [cx, cy] of p.cells) {
+      const r = c.cellRect(p.col + cx, lr - cy);
+      drawBlock(ctx, r, PIECE_COLORS[p.color], 0.25);
+      ctx.strokeStyle = `rgba(255,70,70,${0.6 + 0.4 * blink})`;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
+    }
+    const mid = [...cols.keys()].reduce((a, b) => a + b, 0) / cols.size;
+    text(ctx, '!', (mid + 0.5) * CELL, top + 22, 26, `rgba(255,90,90,${0.6 + 0.4 * blink})`, { bold: true });
   }
+  // 떨어지는 블록과 그 그림자
   for (const p of c.pieces) {
+    if (p.warn > 0) continue;
+    const lr = c.landRow(p);
+    for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellRect(p.col + cx, lr - cy), PIECE_COLORS[p.color], 0.2);
     for (const [cx, cy] of p.cells) drawBlock(ctx, c.cellAt(p, cx, cy), PIECE_COLORS[p.color]);
   }
 
   // 꼬마: 판정 상자 아랫면에 맞춰 그림
   const p = game.player;
   const h = CELL * 1.05, w = h * (Characters.CellW / Characters.CellH);   // 한 칸 크기
-  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(c.x + KID_W / 2 - w / 2, c.y + KID_H - h + 2, w, h));
+  const shake = c.pushed > 0 ? Math.sin(v.time * 80) * 3 : 0;   // 블록에 밀려난 직후 흔들림
+  drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(c.x + KID_W / 2 - w / 2 + shake, c.y + KID_H - h + 2, w, h));
 
   // 용암: 윗면이 출렁이고 위로 붉은 빛
   const ly = c.lavaY;
@@ -262,8 +288,8 @@ function drawClimb(ctx: Ctx, game: Game, v: View): void {
   const my = World.Height * 0.32;
   if (c.time < 4) {
     text(ctx, '블록을 밟고 위로! 용암이 차올라요', World.Width / 2, my, 19, WHITE, { bold: true });
-    text(ctx, '◀ ▶ 로 걷고, 오른쪽 버튼으로 점프 (공중에서 한 번 더)', World.Width / 2, my + 32, 15, '#dcdce6');
-    text(ctx, '블록에 깔리면 끝', World.Width / 2, my + 56, 15, '#ffb0b0');
+    text(ctx, '꼬마는 혼자 달려요. 누르면 점프, 공중에서 한 번 더', World.Width / 2, my + 32, 15, '#dcdce6');
+    text(ctx, '빨간 경고가 뜬 줄에는 블록이 떨어져요', World.Width / 2, my + 56, 15, '#ffb0b0');
   }
 }
 
@@ -1013,40 +1039,11 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const y = l.touch.centerY;
     ctx.globalAlpha = 0.55;
     const hint = game.horde ? '화면 어디든 끌어서 이동'
-      : game.climb ? ''
+      : game.climb ? '화면 어디든 누르면 점프 · 길게 누르면 높이'
       : game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
       : game.swipe ? '◀   흰 선 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';
     text(ctx, hint, l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
-  }
-
-  // 꼬마 오르기 버튼 (화면 픽셀): 왼쪽 아래 ◀ ▶, 오른쪽 아래 점프. 누르고 있으면 밝게
-  const cl = game.climb;
-  if (cl && game.state === 'playing' && v.overlay === 'none') {
-    const pad = (r: Rect, on: boolean) => {
-      roundRect(ctx, r, 16);
-      ctx.fillStyle = on ? 'rgba(255,230,90,0.55)' : 'rgba(20,22,34,0.55)';
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-      ctx.stroke();
-    };
-    const arrow = (r: Rect, dir: number) => {
-      const s = r.w * 0.22, cx = r.centerX, cy = r.centerY;
-      ctx.fillStyle = WHITE;
-      ctx.beginPath();
-      ctx.moveTo(cx + dir * s, cy);
-      ctx.lineTo(cx - dir * s * 0.7, cy - s);
-      ctx.lineTo(cx - dir * s * 0.7, cy + s);
-      ctx.closePath();
-      ctx.fill();
-    };
-    pad(l.climbLeft, cl.keyDir < 0);
-    arrow(l.climbLeft, -1);
-    pad(l.climbRight, cl.keyDir > 0);
-    arrow(l.climbRight, 1);
-    pad(l.climbJump, !cl.grounded);
-    text(ctx, '점프', l.climbJump.centerX, l.climbJump.centerY + 1, 22, WHITE, { bold: true });
   }
 
   // 엘프 모드 조이스틱: 누른 곳에 큰 원, 끈 쪽에 작은 원 (화면 픽셀)

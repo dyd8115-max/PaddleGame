@@ -26,7 +26,7 @@ let clock = 0;
 
 // ---------- 저장 ----------
 // 캐릭터별 최고 기록 (게임 방식이 바뀌면 키도 바꿔서 단위가 다른 옛 기록과 섞이지 않게)
-const KEY_BEST = (ch: number) => ['best0h', 'best1r', 'best2'][ch];
+const KEY_BEST = (ch: number) => ['best0r', 'best1r', 'best2'][ch];
 const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(엘프) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
@@ -74,7 +74,7 @@ function resize(): void {
   };
   // 꼬마 오르기는 아래 조작 공간을 넓혀서 큰 버튼을 둠
   const climbing = Characters.List[game.state === 'playing' ? game.player.character : game.selected].mode === 'climb';
-  layout = makeLayout(w, h, dpr, insets, climbing ? 108 : undefined);
+  layout = makeLayout(w, h, dpr, insets, climbing ? 72 : undefined);
   game.setWorldHeight(layout.worldH);
 }
 window.addEventListener('resize', resize);
@@ -104,7 +104,7 @@ function pause(): void {
   game.horde?.joyEnd();
   if (game.horde) game.horde.keyDir = new Vec2();
   climbHeld.clear();
-  if (game.climb) game.climb.keyDir = 0;
+  game.climb?.release();
 }
 
 function toggleMute(): void {
@@ -144,30 +144,20 @@ const SOUND_OF: Record<GameEvent, SoundName> = {
 let downX = 0, downY = 0, downAt = 0, activePointer = -1;
 let elfWalking = false;   // 엘프 모드: 지금 손가락이 자리 옮기기 중인지
 let flagTap = false;      // 지뢰 모드: 이번 손가락은 깃발 꽂기라 패들을 움직이지 않음
-// 꼬마 오르기: 손가락마다 누르고 있는 버튼 (왼쪽·오른쪽을 누른 채 점프도 누를 수 있게)
-const climbHeld = new Map<number, 'left' | 'right' | 'jump'>();
+// 꼬마 오르기: 화면 어디든 누르면 점프 (일시정지 버튼 빼고). 누르고 있는 손가락이 하나도 없으면 뗀 것
+const climbHeld = new Set<number>();
 
-function climbDir(): number {
-  let d = 0;
-  for (const b of climbHeld.values()) d += b === 'left' ? -1 : b === 'right' ? 1 : 0;
-  return Math.sign(d);
-}
-
-// 꼬마 오르기 버튼: 누르면 true
 function climbPress(e: PointerEvent): boolean {
   if (!(game.state === 'playing' && overlay === 'none' && game.climb)) return false;
-  const x = lx(e), y = ly(e);
-  const b = layout.climbLeft.contains(x, y) ? 'left' : layout.climbRight.contains(x, y) ? 'right' : layout.climbJump.contains(x, y) ? 'jump' : null;
-  if (!b) return false;
-  climbHeld.set(e.pointerId, b);
-  if (b === 'jump') game.climb.jump();
-  game.climb.keyDir = climbDir();
+  if (layout.pauseBtn.contains(lx(e), ly(e)) || hudSoundRect().contains(lx(e), ly(e))) return false;
+  climbHeld.add(e.pointerId);
+  game.climb.press();
   return true;
 }
 
 function climbRelease(e: PointerEvent): void {
   if (!climbHeld.delete(e.pointerId)) return;
-  if (game.climb) game.climb.keyDir = climbDir();
+  if (climbHeld.size === 0) game.climb?.release();
 }
 
 function hudSoundRect() { return game.state === 'playing' ? layout.soundBtn : layout.pauseBtn; }
@@ -303,10 +293,10 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowUp') k.y = -1;
     else if (e.key === 'ArrowDown') k.y = 1;
   }
-  else if (game.climb && overlay === 'none') {   // 꼬마 오르기: 방향키로 걷고 위/스페이스로 점프
-    if (e.key === 'ArrowLeft') game.climb.keyDir = -1;
-    else if (e.key === 'ArrowRight') game.climb.keyDir = 1;
-    else if (e.key === 'ArrowUp' || e.key === ' ') game.climb.jump();
+  else if (game.climb && overlay === 'none') {   // 꼬마 오르기: 방향키로 방향 바꾸고 위/스페이스로 점프
+    if (e.key === 'ArrowLeft') game.climb.setDir(-1);
+    else if (e.key === 'ArrowRight') game.climb.setDir(1);
+    else if ((e.key === 'ArrowUp' || e.key === ' ') && !e.repeat) game.climb.press();
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -315,8 +305,7 @@ window.addEventListener('keyup', (e) => {
     if ((e.key === 'ArrowLeft' && k.x < 0) || (e.key === 'ArrowRight' && k.x > 0)) k.x = 0;
     if ((e.key === 'ArrowUp' && k.y < 0) || (e.key === 'ArrowDown' && k.y > 0)) k.y = 0;
   }
-  if (!game.climb) return;
-  if ((e.key === 'ArrowLeft' && game.climb.keyDir < 0) || (e.key === 'ArrowRight' && game.climb.keyDir > 0)) game.climb.keyDir = 0;
+  if (game.climb && (e.key === 'ArrowUp' || e.key === ' ')) game.climb.release();
 });
 
 // ---------- 앱 전환, 뒤로가기 ----------

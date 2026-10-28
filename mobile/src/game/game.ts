@@ -280,6 +280,7 @@ export class Game {
     this.climb = new Climb({
       hurt: () => this.events_.push('hurt'),
       land: () => this.events_.push('brickHit'),
+      jump: () => undefined,
       higher: () => { this.score_ += 10; },
       gameOver: () => this.endGame('gameover'),
     });
