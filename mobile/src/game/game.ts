@@ -301,6 +301,7 @@ export class Game {
     this.serveTimer_ = 0;
     this.claim = new Claim({
       claim: (n) => { this.score_ += n; this.events_.push('brickBreak'); },
+      kill: () => { this.score_ += 100; this.events_.push('devilStomp'); },
       hurt: () => this.events_.push('hurt'),
       stageClear: () => { this.score_ += 500; this.events_.push('stageClear'); },
       gameOver: () => this.endGame('gameover'),
@@ -406,7 +407,7 @@ export class Game {
       c.update(dt);
       if (this.claim) {
         const p = this.player;
-        if (c.dir[0] !== 0) p.facingLeft = c.dir[0] < 0;
+        if (c.kid.dir[0] !== 0) p.facingLeft = c.kid.dir[0] < 0;
         const was = p.walking;
         p.walking = c.moving;
         if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;

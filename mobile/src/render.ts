@@ -6,7 +6,7 @@ import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMod
 import { SKILLS, type SkillId } from './game/archer';
 import { KID_DRAW_H, KID_DRAW_W, SHOT_R, TILE_HP, hordeSkill, type Monster } from './game/horde';
 import { CELL, KID_H, KID_W, LAVA_DELAY, PIECE_COLORS } from './game/climb';
-import { CC, DEVIL_DRAW, GOAL, LAND, TRAIL, type Claim, type ClaimDevil } from './game/claim';
+import { CC, GOAL, KID, PLAYER_COLORS, type Claim, type Player } from './game/claim';
 
 const ARROW_SPEED_DRAW = 720;   // 화살 꼬리 길이 계산용 (archer.ts 의 화살 빠르기)
 import { TOSS_BUTTONS_W, type Layout, HUD_H } from './layout';
@@ -179,6 +179,13 @@ function drawBlock(ctx: Ctx, r: Rect, color: string, alpha = 1): void {
 }
 
 // ---------- 꼬마 땅따먹기 ----------
+// 색을 밝게/어둡게
+function shade(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const f = (v: number) => Math.max(0, Math.min(255, Math.round(k >= 0 ? v + (255 - v) * k : v * (1 + k))));
+  return `rgb(${f((n >> 16) & 255)},${f((n >> 8) & 255)},${f(n & 255)})`;
+}
+
 // 맵 전체를 한 칸 = 1픽셀로 그린 그림 (작은 지도용). 땅 모양이 바뀔 때만 다시 그림
 let claimMini: { canvas: HTMLCanvasElement; version: number; claim: Claim } | null = null;
 function claimMiniCanvas(c: Claim): HTMLCanvasElement {
@@ -187,96 +194,109 @@ function claimMiniCanvas(c: Claim): HTMLCanvasElement {
   canvas.width = c.cols; canvas.height = c.rows;
   const g = canvas.getContext('2d')!;
   const img = g.createImageData(c.cols, c.rows);
-  for (let i = 0; i < c.cells.length; i++) {
-    const v = c.cells[i];
-    const [r, gg, b, a] = v === LAND ? [214, 130, 96, 255] : v === TRAIL ? [255, 225, 77, 255] : [20, 24, 44, 200];
-    img.data[i * 4] = r; img.data[i * 4 + 1] = gg; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = a;
+  const rgb = PLAYER_COLORS.map((h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; });
+  for (let i = 0; i < c.owner.length; i++) {
+    const o = c.owner[i], t = c.trail[i];
+    let col = [235, 236, 245], a = 210;
+    if (o >= 0) { col = rgb[o % rgb.length]; a = 255; }
+    if (t >= 0) { col = rgb[t % rgb.length].map((v) => Math.round(v + (255 - v) * 0.5)); a = 255; }
+    img.data[i * 4] = col[0]; img.data[i * 4 + 1] = col[1]; img.data[i * 4 + 2] = col[2]; img.data[i * 4 + 3] = a;
   }
   g.putImageData(img, 0, 0);
   claimMini = { canvas, version: c.version, claim: c };
   return canvas;
 }
 
-// 악마 그림 (걷기 장면을 돌림). 땅 악마는 붉은 빛
-function drawClaimDevil(ctx: Ctx, d: ClaimDevil): void {
-  const img = images.devil;
-  const S = DEVIL_DRAW;
-  // 그림 칸 안에서 몸통 가운데가 대략 (59, 84)/128 쯤
-  const x = d.x - S * 0.46, y = d.y - S * 0.66;
-  // 어두운 배경에서도 보이게 뒤에 빛 (땅 악마는 붉게)
-  const glow = ctx.createRadialGradient(d.x, d.y, 4, d.x, d.y, 34);
-  glow.addColorStop(0, d.land ? 'rgba(255,70,40,0.55)' : 'rgba(200,120,255,0.45)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(d.x, d.y, 34, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.beginPath(); ctx.ellipse(d.x, d.y + S * 0.3, 14, 4, 0, 0, Math.PI * 2); ctx.fill();
-  if (!img) { ctx.fillStyle = '#781e28'; ctx.fillRect(d.x - 12, d.y - 18, 24, 36); return; }
-  const cell = DevilSprite.Cell;
-  const frame = Math.floor(d.anim * DevilSprite.WalkFps) % DevilSprite.WalkFrames;
-  ctx.save();
-  ctx.imageSmoothingEnabled = false;
-  if (d.vx < 0) {
-    ctx.translate(x + S, y);
-    ctx.scale(-1, 1);
-    ctx.drawImage(img, frame * cell, 0, cell, cell, 0, 0, S, S);
-  } else ctx.drawImage(img, frame * cell, 0, cell, cell, x, y, S, S);
-  ctx.restore();
+// 악마: 동그란 몸에 뿔과 눈 (나중에 그림으로 바꿀 자리)
+function drawClaimDevil(ctx: Ctx, c: Claim, p: Player, t: number): void {
+  const x = c.headX(p), y = c.headY(p), R = 14;
+  const col = PLAYER_COLORS[p.id % PLAYER_COLORS.length];
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x, y + R * 0.9, R * 0.9, R * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+  const bob = Math.sin(t * 10 + p.id) * 1.5;
+  ctx.fillStyle = shade(col, -0.35);
+  for (const s of [-1, 1]) {   // 뿔
+    ctx.beginPath();
+    ctx.moveTo(x + s * R * 0.35, y - R * 0.75 + bob);
+    ctx.lineTo(x + s * R * 0.8, y - R * 1.35 + bob);
+    ctx.lineTo(x + s * R * 0.75, y - R * 0.55 + bob);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(x, y + bob, R, 0, Math.PI * 2);
+  ctx.fillStyle = col; ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = shade(col, -0.45); ctx.stroke();
+  const dx = p.dir[0] * 2.5, dy = p.dir[1] * 2.5;
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = WHITE;
+    ctx.beginPath(); ctx.arc(x + s * 5 + dx, y - 2 + bob + dy, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a1020';
+    ctx.beginPath(); ctx.arc(x + s * 5 + dx * 1.4, y - 2 + bob + dy * 1.4, 2, 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 function drawClaim(ctx: Ctx, game: Game, v: View): void {
   const c = game.claim!;
   ctx.save();
   ctx.translate(-Math.round(c.camX), -Math.round(c.camY));
-  // 화면에 보이는 칸만
   const c0 = Math.max(0, Math.floor(c.camX / CC)), c1 = Math.min(c.cols - 1, Math.ceil((c.camX + World.Width) / CC));
   const r0 = Math.max(0, Math.floor(c.camY / CC)), r1 = Math.min(c.rows - 1, Math.ceil((c.camY + World.Height) / CC));
-  // 바다: 배경을 어둡게
-  ctx.fillStyle = 'rgba(6,8,20,0.55)';
+
+  // 빈 땅: 밝은 바탕에 옅은 격자
+  ctx.fillStyle = '#eceef6';
   ctx.fillRect(c0 * CC, r0 * CC, (c1 - c0 + 1) * CC, (r1 - r0 + 1) * CC);
-  // 땅: 줄마다 이어진 칸을 한 번에, 벽돌 무늬
-  for (let r = r0; r <= r1; r++) {
-    let s0 = -1;
-    for (let col = c0; col <= c1 + 1; col++) {
-      const land = col <= c1 && c.cells[r * c.cols + col] === LAND;
-      if (land && s0 < 0) s0 = col;
-      if (!land && s0 >= 0) {
-        ctx.fillStyle = '#c9785a';
-        ctx.fillRect(s0 * CC, r * CC, (col - s0) * CC, CC);
-        ctx.fillStyle = 'rgba(70,30,20,0.35)';
-        ctx.fillRect(s0 * CC, r * CC, (col - s0) * CC, 1);
-        for (let k = s0; k < col; k++) if ((k + (r % 2) * 2) % 4 === 0) ctx.fillRect(k * CC, r * CC, 1, CC);
-        s0 = -1;
+  ctx.fillStyle = 'rgba(120,130,170,0.12)';
+  for (let col = c0; col <= c1; col++) ctx.fillRect(col * CC, r0 * CC, 1, (r1 - r0 + 1) * CC);
+  for (let r = r0; r <= r1; r++) ctx.fillRect(c0 * CC, r * CC, (c1 - c0 + 1) * CC, 1);
+
+  // 땅과 선: 줄마다 같은 주인끼리 이어서. 땅 아래쪽 가장자리는 진하게 (두께감)
+  const drawRuns = (arr: Int8Array, color: (o: number) => string, inset: number) => {
+    for (let r = r0; r <= r1; r++) {
+      let s0 = -1, cur = -1;
+      for (let col = c0; col <= c1 + 1; col++) {
+        const o = col <= c1 ? arr[r * c.cols + col] : -1;
+        if (o !== cur) {
+          if (cur >= 0) { ctx.fillStyle = color(cur); ctx.fillRect(s0 * CC + inset, r * CC + inset, (col - s0) * CC - inset * 2, CC - inset * 2); }
+          cur = o; s0 = col;
+        }
       }
     }
+  };
+  // 두께: 아래 칸이 다른 주인인 땅 칸 밑에 진한 띠
+  for (let r = r0; r <= r1; r++) {
+    for (let col = c0; col <= c1; col++) {
+      const o = c.owner[r * c.cols + col];
+      if (o < 0) continue;
+      const below = r + 1 < c.rows ? c.owner[(r + 1) * c.cols + col] : -2;
+      if (below !== o) { ctx.fillStyle = shade(PLAYER_COLORS[o % PLAYER_COLORS.length], -0.35); ctx.fillRect(col * CC, (r + 1) * CC, CC, 5); }
+    }
   }
+  drawRuns(c.owner, (o) => PLAYER_COLORS[o % PLAYER_COLORS.length], 0);
+  drawRuns(c.trail, (o) => shade(PLAYER_COLORS[o % PLAYER_COLORS.length], 0.45), 2);
+
   // 방금 차지한 곳 반짝
   if (c.flash.t > 0) {
-    ctx.fillStyle = `rgba(255,255,220,${c.flash.t * 1.6})`;
+    ctx.fillStyle = `rgba(255,255,255,${c.flash.t * 1.5})`;
     for (const i of c.flash.idx) {
       const col = i % c.cols, r = (i - col) / c.cols;
       if (col >= c0 && col <= c1 && r >= r0 && r <= r1) ctx.fillRect(col * CC, r * CC, CC, CC);
     }
   }
-  // 선
-  ctx.fillStyle = '#ffe14d';
-  for (const i of c.trail) {
-    const col = i % c.cols, r = (i - col) / c.cols;
-    ctx.fillRect(col * CC + 3, r * CC + 3, CC - 6, CC - 6);
+
+  // 악마
+  for (const p of c.players) {
+    if (p.id === KID || !p.alive) continue;
+    const x = c.headX(p), y = c.headY(p);
+    if (x < c.camX - 40 || x > c.camX + World.Width + 40 || y < c.camY - 40 || y > c.camY + World.Height + 40) continue;
+    drawClaimDevil(ctx, c, p, v.time);
   }
   // 꼬마 (칸 가운데에 발). 맞으면 깜빡임
   if (c.hurtTimer <= 0 || Math.floor(v.time * 12) % 2 === 0) {
-    const p = game.player;
+    const pl = game.player;
     const kh = 60, kw = kh * (Characters.CellW / Characters.CellH);
-    const fx = c.kidX, fy = c.kidY + CC * 0.4;
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    const fx = c.kidX, fy = c.kidY + CC * 0.45;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath(); ctx.ellipse(fx, fy, 13, 4, 0, 0, Math.PI * 2); ctx.fill();
-    drawCharacter(ctx, p.character, p.frame(), p.facingLeft, new Rect(fx - kw / 2, fy - kh + 4, kw, kh));
-  }
-  // 악마
-  for (const d of c.devils) {
-    if (d.x < c.camX - 60 || d.x > c.camX + World.Width + 60 || d.y < c.camY - 60 || d.y > c.camY + World.Height + 60) continue;
-    drawClaimDevil(ctx, d);
+    drawCharacter(ctx, pl.character, pl.frame(), pl.facingLeft, new Rect(fx - kw / 2, fy - kh + 4, kw, kh));
   }
   ctx.restore();
 
@@ -284,41 +304,38 @@ function drawClaim(ctx: Ctx, game: Game, v: View): void {
   const pct = c.percent;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(0, 0, World.Width, 8);
-  ctx.fillStyle = '#4ddc7a';
+  ctx.fillStyle = PLAYER_COLORS[KID];
   ctx.fillRect(0, 0, World.Width * Math.min(1, pct), 8);
   ctx.fillStyle = WHITE;
   ctx.fillRect(World.Width * GOAL - 1, 0, 2, 12);
 
-  // 작은 지도 (오른쪽 위): 맵 전체, 지금 보이는 곳 테두리, 악마와 꼬마 점
-  const mw = 92, ms = mw / c.mapW, mh = c.mapH * ms, mx = World.Width - mw - 8, my0 = 16;
+  // 작은 지도 (오른쪽 위)
+  const mw = 84, ms = mw / c.mapW, mh = c.mapH * ms, mx = World.Width - mw - 8, my0 = 16;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(mx - 3, my0 - 3, mw + 6, mh + 6);
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(claimMiniCanvas(c), mx, my0, mw, mh);
   ctx.restore();
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.strokeStyle = 'rgba(20,20,30,0.85)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(mx + c.camX * ms, my0 + Math.max(0, c.camY) * ms, World.Width * ms, Math.min(c.mapH, World.Height) * ms);
-  for (const d of c.devils) {
-    ctx.fillStyle = d.land ? '#ff5a3a' : '#ff9ad0';
-    ctx.fillRect(mx + d.x * ms - 2, my0 + d.y * ms - 2, 4, 4);
-  }
-  if (Math.floor(v.time * 4) % 2 === 0 || c.drawing) {
-    ctx.fillStyle = '#5adcff';
-    ctx.fillRect(mx + c.kidX * ms - 2.5, my0 + c.kidY * ms - 2.5, 5, 5);
+  ctx.strokeRect(mx + c.camX * ms, my0 + c.camY * ms, World.Width * ms, World.Height * ms);
+  for (const p of c.players) {
+    if (!p.alive) continue;
+    ctx.fillStyle = p.id === KID ? (Math.floor(v.time * 4) % 2 ? '#ffffff' : '#1a1a2a') : shade(PLAYER_COLORS[p.id % PLAYER_COLORS.length], -0.4);
+    ctx.fillRect(mx + c.headX(p) * ms - 2, my0 + c.headY(p) * ms - 2, 4, 4);
   }
 
-  const my = World.Height * 0.42;
+  const my = World.Height * 0.4;
   if (c.clearTimer > 0) {
     text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
-    text(ctx, '다음 스테이지는 악마가 하나 더', World.Width / 2, my + 40, 16, '#dcdce6');
-  } else if (c.stage === 1 && c.stageTime < 4.5) {
-    text(ctx, '끌어서 걷고, 선으로 막아 땅을 차지!', World.Width / 2, my, 19, WHITE, { bold: true });
-    text(ctx, '악마가 없는 쪽이 꼬마 땅이 돼요. 70% 면 클리어', World.Width / 2, my + 30, 15, '#dcdce6');
-    text(ctx, '선을 긋는 중에 악마가 닿으면 목숨 -1', World.Width / 2, my + 54, 15, '#ffb0b0');
-  } else if (c.stage === 3 && c.stageTime < 3) {
-    text(ctx, '붉은 악마는 땅 위를 돌아다녀요!', World.Width / 2, my, 20, '#ff9a9a', { bold: true });
+    text(ctx, '다음 스테이지는 악마가 하나 더', World.Width / 2, my + 40, 16, '#2a2a3a', { bold: true });
+  } else if (c.stage === 1 && c.stageTime < 5) {
+    ctx.fillStyle = 'rgba(10,12,24,0.6)';
+    ctx.fillRect(20, my - 26, World.Width - 40, 100);
+    text(ctx, '끌어서 걷고, 선으로 둘러싸 땅을 차지!', World.Width / 2, my, 19, WHITE, { bold: true });
+    text(ctx, '악마 선을 밟으면 악마가, 악마가 내 선을 밟으면 내가 당해요', World.Width / 2, my + 30, 14, '#dcdce6');
+    text(ctx, `맵의 ${GOAL * 100}% 를 차지하면 클리어`, World.Width / 2, my + 54, 14, ITEM_COLOR);
   }
 }
 
@@ -1196,7 +1213,7 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const best = game.bestRecord(game.player.character);
     const sw = game.swipe;
     const ar = game.archer;
-    const sub = game.claim ? `${Math.floor(game.claim.percent * 100)}% / ${GOAL * 100}% · 목숨 ${'♥'.repeat(Math.max(0, game.claim.lives))}`
+    const sub = game.claim ? `${Math.floor(game.claim.percent * 100)}%/${GOAL * 100}% · ${'♥'.repeat(Math.max(0, game.claim.lives))} · 처치 ${game.claim.kills}`
       : game.horde ? `처치 ${game.horde.kills} · 블록 ${game.horde.tilesLeft}개${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
       : game.climb ? `높이 ${game.climb.best}칸${best > 0 ? ` · 최고 ${formatRecord(mode, best)}` : ''}`
       : mode === 'mine' ? `체력 ${game.hearts}/3 · 지뢰 ${game.minesLeft}`

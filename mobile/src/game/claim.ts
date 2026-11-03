@@ -1,124 +1,144 @@
-// 꼬마 모드: 땅따먹기 (자넥스 방식)
+// 꼬마 모드: 땅따먹기 (악마들과 땅 뺏기)
 //
 // - 맵은 화면보다 크고, 화면은 꼬마를 따라 움직인다. 오른쪽 위 작은 지도에 맵 전체가 보인다
-// - 맵 가장자리 두 줄은 처음부터 꼬마 땅이다. 안쪽 빈 곳(바다)에는 악마들이 튕기며 날아다닌다
-// - 화면 어디든 누른 채 상하좌우로 끌면 그쪽으로 걷고, 손을 떼면 멈춘다 (직접 조종)
-// - 바다로 나가면 지나간 자리에 선이 그려진다. 다시 땅으로 돌아오면 선이 땅이 되고,
-//   선으로 막혀서 악마가 하나도 없는 바다는 모두 꼬마 땅이 된다
-// - 선을 긋는 중에 악마가 선이나 꼬마에 닿으면 목숨 -1 (선은 사라지고 출발한 땅으로 돌아감).
-//   선을 긋다가 정반대로는 돌 수 없다
-// - 3스테이지부터 땅 위를 돌아다니는 붉은 악마가 나온다. 땅 위의 꼬마에 닿아도 목숨 -1
-// - 땅을 70% 차지하면 다음 스테이지. 스테이지마다 악마가 하나씩 늘고 조금 빨라진다
-// - 목숨 3개, 기록은 도달한 스테이지
+// - 꼬마와 악마들은 각자 작은 땅에서 시작한다. 자기 땅 밖으로 나가면 지나간 자리에 선이 남고,
+//   다시 자기 땅으로 돌아오면 선과 선으로 둘러싼 곳이 모두 자기 땅이 된다 (남의 땅도 빼앗음)
+// - 남의 선을 밟으면 그 선의 주인이 죽는다. 자기 선을 밟아도 죽는다
+//   악마가 꼬마 선을 밟으면 꼬마 목숨 -1 (선은 사라지고 마지막으로 나간 자기 땅으로 돌아감)
+//   꼬마가 악마 선을 밟으면 그 악마는 땅과 함께 사라지고, 잠시 뒤 다른 곳에서 새 악마가 나온다
+// - 화면 어디든 누른 채 상하좌우로 끌면 그쪽으로 걷고, 손을 떼면 멈춘다
+// - 맵의 절반을 차지하면 다음 스테이지. 스테이지마다 악마가 하나씩 늘고 조금 빨라진다
+// - 목숨 3개. 땅을 모두 빼앗겨도 끝. 기록은 도달한 스테이지
 import { World } from './objects';
 
 export interface ClaimHost {
   claim(cells: number): void;
+  kill(): void;
   hurt(): void;
   stageClear(): void;
   gameOver(): void;
 }
 
 export const CC = 16;                  // 칸 크기
-export const MAP_COLS = 56;            // 맵 크기 (칸). 화면보다 넓고 높음
-export const MAP_ROWS = 84;
-const BORDER = 2;
-const KID_SPEED = 11;                  // 초당 칸 수
+export const MAP_COLS = 60;
+export const MAP_ROWS = 90;
+const KID_SPEED = 10;                  // 초당 칸 수
 const START_LIVES = 3;
-export const GOAL = 0.7;
-const CLEAR_PAUSE = 1.6;
+export const GOAL = 0.5;
+const CLEAR_PAUSE = 1.8;
 const HURT_PAUSE = 1.0;
-export const DEVIL_R = 18;             // 악마 판정 반지름
-export const DEVIL_DRAW = 100;         // 악마 그림 크기 (그림 칸 한 변)
+const RESPAWN = 3;
+const KID_HOME = 3;                    // 시작 땅 반지름 (칸): 7×7
+const DEVIL_HOME = 2;                  // 5×5
 
-export const SEA = 0, LAND = 1, TRAIL = 2;
+export const KID = 0;
+export const PLAYER_COLORS = ['#4aa8ff', '#ff5a5a', '#b26bff', '#ff9a3c', '#ff6fb5', '#3ccf8e', '#e6d23c', '#8a8aff'];
 
-export interface ClaimDevil { x: number; y: number; vx: number; vy: number; land: boolean; anim: number; }
+export interface Player {
+  id: number;
+  c: number; r: number;              // 머리 칸
+  dir: [number, number];
+  alive: boolean;
+  respawn: number;
+  trail: number[];
+  leaveC: number; leaveR: number;    // 마지막으로 자기 땅에서 나간 칸
+  step: number;
+  speed: number;
+  // 악마 생각
+  plan: [number, number, number][];   // [dx, dy, 칸 수]
+  mode: 'home' | 'out' | 'return' | 'hunt';
+  wait: number;
+}
+
+const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
 
 export class Claim {
   stage = 1;
   lives = START_LIVES;
+  kills = 0;
   readonly cols = MAP_COLS;
   readonly rows = MAP_ROWS;
-  cells: Uint8Array = new Uint8Array(MAP_COLS * MAP_ROWS);
-  version = 0;               // 땅 모양이 바뀔 때마다 +1 (그림 다시 그리기용)
-  devils: ClaimDevil[] = [];
-  kc = 0;                    // 꼬마 칸 위치
-  kr = 0;
-  dir: [number, number] = [0, 0];
-  holdDir: [number, number] = [0, 0];   // 누르고 있는 방향 (없으면 멈춤)
-  drawing = false;
-  trail: number[] = [];
+  owner = new Int8Array(MAP_COLS * MAP_ROWS);    // 땅 주인 (-1 은 빈 땅)
+  trail = new Int8Array(MAP_COLS * MAP_ROWS);    // 선 주인 (-1 은 없음)
+  version = 0;
+  players: Player[] = [];
+  holdDir: [number, number] = [0, 0];
   clearTimer = 0;
   hurtTimer = 0;
   time = 0;
   stageTime = 0;
-  camX = 0;                  // 화면 왼쪽 위의 맵 좌표
+  camX = 0;
   camY = 0;
   flash: { idx: number[]; t: number } = { idx: [], t: 0 };
-
-  private step = 0;
-  private startC = 0;
-  private startR = 0;
-  private interior = 1;
-  private landN = 0;
+  counts: number[] = [];                          // 주인별 땅 칸 수
 
   constructor(private host: ClaimHost) { this.startStage(); }
 
-  get percent(): number { return this.landN / this.interior; }
+  get kid(): Player { return this.players[KID]; }
+  get percent(): number { return (this.counts[KID] ?? 0) / (this.cols * this.rows); }
   get mapW(): number { return this.cols * CC; }
   get mapH(): number { return this.rows * CC; }
-  get moving(): boolean { return this.dir[0] !== 0 || this.dir[1] !== 0; }
-  get kidX(): number { return (this.kc + 0.5) * CC; }
-  get kidY(): number { return (this.kr + 0.5) * CC; }
+  get moving(): boolean { return this.kid.dir[0] !== 0 || this.kid.dir[1] !== 0; }
+  get drawing(): boolean { return this.kid.trail.length > 0; }
+  headX(p: Player): number { return (p.c + 0.5) * CC; }
+  headY(p: Player): number { return (p.r + 0.5) * CC; }
+  get kidX(): number { return this.headX(this.kid); }
+  get kidY(): number { return this.headY(this.kid); }
+  idx(c: number, r: number): number { return r * this.cols + c; }
+  inside(c: number, r: number): boolean { return c >= 0 && c < this.cols && r >= 0 && r < this.rows; }
 
-  at(c: number, r: number): number {
-    if (c < 0 || c >= this.cols || r < 0 || r >= this.rows) return LAND;
-    return this.cells[r * this.cols + c];
-  }
-  cellIndex(x: number, y: number): number {
-    const c = Math.floor(x / CC), r = Math.floor(y / CC);
-    if (c < 0 || c >= this.cols || r < 0 || r >= this.rows) return -1;
-    return r * this.cols + c;
-  }
-
+  // ---------- 스테이지 ----------
   private startStage(): void {
-    for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.cols; c++) {
-      const edge = r < BORDER || r >= this.rows - BORDER || c < BORDER || c >= this.cols - BORDER;
-      this.cells[r * this.cols + c] = edge ? LAND : SEA;
+    this.owner.fill(-1);
+    this.trail.fill(-1);
+    const n = Math.min(7, this.stage + 2);
+    this.players = [];
+    this.players.push(this.newPlayer(KID, Math.floor(this.cols / 2), Math.floor(this.rows / 2), KID_HOME));
+    for (let i = 1; i <= n; i++) {
+      const spot = this.freeSpot(DEVIL_HOME + 3) ?? [randInt(4, this.cols - 5), randInt(4, this.rows - 5)];
+      this.players.push(this.newPlayer(i, spot[0], spot[1], DEVIL_HOME));
     }
-    this.interior = (this.rows - BORDER * 2) * (this.cols - BORDER * 2);
-    this.landN = 0;
-    this.version++;
-    this.kc = Math.floor(this.cols / 2);
-    this.kr = this.rows - 1;
-    this.dir = [0, 0];
-    this.drawing = false;
-    this.trail = [];
     this.stageTime = 0;
-    this.devils = [];
-    const n = Math.min(8, this.stage + 1);
-    const speed = Math.min(300, 150 + this.stage * 14);
-    for (let i = 0; i < n; i++) this.devils.push(this.makeDevil(speed, false));
-    if (this.stage >= 3) for (let i = 0; i < Math.min(3, Math.floor((this.stage - 1) / 2)); i++) this.devils.push(this.makeDevil(speed * 0.7, true));
+    this.recount();
+    this.version++;
     this.follow(1);
   }
 
-  private makeDevil(speed: number, land: boolean): ClaimDevil {
-    const a = (Math.floor(Math.random() * 4) * Math.PI) / 2 + Math.PI / 4 + (Math.random() - 0.5) * 0.5;
-    if (land) {   // 땅 악마: 위쪽 가장자리 땅에서 출발
-      return { x: (6 + Math.random() * (this.cols - 12)) * CC, y: CC, vx: Math.cos(a) * speed, vy: Math.abs(Math.sin(a)) * speed, land, anim: Math.random() };
+  private newPlayer(id: number, c: number, r: number, home: number): Player {
+    for (let y = r - home; y <= r + home; y++) for (let x = c - home; x <= c + home; x++) {
+      if (this.inside(x, y)) this.owner[this.idx(x, y)] = id;
     }
-    const x = (BORDER + 4 + Math.random() * (this.cols - BORDER * 2 - 8)) * CC;
-    const y = (BORDER + 4 + Math.random() * (this.rows * 0.55)) * CC;
-    return { x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, land, anim: Math.random() };
+    const devilSpeed = Math.min(10, 7 + this.stage * 0.5);
+    return {
+      id, c, r, dir: [0, 0], alive: true, respawn: 0, trail: [], leaveC: c, leaveR: r, step: 0,
+      speed: id === KID ? KID_SPEED : devilSpeed, plan: [], mode: 'home', wait: rand(0.2, 1.2),
+    };
+  }
+
+  // 빈 땅에서 사방 m 칸이 다 비어 있는 곳 (꼬마와는 떨어지게)
+  private freeSpot(m: number): [number, number] | null {
+    for (let t = 0; t < 200; t++) {
+      const c = randInt(m, this.cols - 1 - m), r = randInt(m, this.rows - 1 - m);
+      if (this.players.length > 0 && Math.hypot(c - this.kid.c, r - this.kid.r) < 14) continue;
+      let ok = true;
+      for (let y = r - m; y <= r + m && ok; y++) for (let x = c - m; x <= c + m; x++) {
+        const i = this.idx(x, y);
+        if (this.owner[i] !== -1 || this.trail[i] !== -1) { ok = false; break; }
+      }
+      if (ok) return [c, r];
+    }
+    return null;
+  }
+
+  private recount(): void {
+    this.counts = new Array(this.players.length).fill(0);
+    for (const o of this.owner) if (o >= 0) this.counts[o]++;
   }
 
   // ---------- 조작 ----------
-  // 누르고 있는 방향. [0,0] 이면 멈춤
   hold(dx: number, dy: number): void { this.holdDir = [dx, dy]; }
-
-  // 화면 조이스틱 (화면 픽셀): 누른 곳 기준으로 끈 방향의 큰 쪽으로 걸음. 너무 멀리 끌면 기준점이 따라옴
   joyFrom: { x: number; y: number } | null = null;
   joyTo = { x: 0, y: 0 };
   joyBegin(x: number, y: number): void { this.joyFrom = { x, y }; this.joyTo = { x, y }; this.hold(0, 0); }
@@ -139,131 +159,225 @@ export class Claim {
     this.time += dt;
     this.stageTime += dt;
     this.flash.t = Math.max(0, this.flash.t - dt);
-    for (const d of this.devils) d.anim += dt;
     if (this.clearTimer > 0) {
       this.clearTimer -= dt;
       if (this.clearTimer <= 0) { this.stage++; this.startStage(); }
       return;
     }
-    if (this.hurtTimer > 0) { this.hurtTimer -= dt; this.moveDevils(dt); this.follow(dt); return; }
+    if (this.hurtTimer > 0) this.hurtTimer -= dt;
 
-    // 선을 긋는 중에 정반대로 돌면 자기 선을 밟으니 그 방향은 무시
-    const [hx, hy] = this.holdDir;
-    const reverse = this.drawing && this.trail.length > 0 && hx === -this.dir[0] && hy === -this.dir[1] && (hx !== 0 || hy !== 0);
-    if (!reverse) this.dir = [hx, hy];
-    if (this.moving) {
-      this.step += dt * KID_SPEED;
-      while (this.step >= 1 && this.hurtTimer <= 0 && this.clearTimer <= 0) { this.step -= 1; this.stepKid(); }
-    } else this.step = Math.min(this.step, 0.6);   // 다시 누르면 바로 한 칸 가게
-    this.moveDevils(dt);
+    // 꼬마: 선을 긋는 중에 정반대로는 못 감
+    const kid = this.kid;
+    if (this.hurtTimer <= 0) {
+      const [hx, hy] = this.holdDir;
+      const reverse = kid.trail.length > 0 && hx === -kid.dir[0] && hy === -kid.dir[1] && (hx !== 0 || hy !== 0);
+      if (!reverse) kid.dir = [hx, hy];
+    } else kid.dir = [0, 0];
+
+    for (const p of this.players) {
+      if (!p.alive) {
+        p.respawn -= dt;
+        if (p.respawn <= 0) this.respawnDevil(p);
+        continue;
+      }
+      if (p.id !== KID) this.think(p, dt);
+      if (p.dir[0] === 0 && p.dir[1] === 0) { p.step = Math.min(p.step, 0.6); continue; }
+      p.step += dt * p.speed;
+      while (p.step >= 1 && p.alive && this.clearTimer <= 0) {
+        p.step -= 1;
+        if (p.id !== KID) this.think(p, 0);
+        this.stepPlayer(p);
+      }
+    }
     this.follow(dt);
   }
 
-  // 화면이 꼬마를 따라감 (맵 끝에서는 멈춤)
   private follow(dt: number): void {
     const tx = Math.max(0, Math.min(this.mapW - World.Width, this.kidX - World.Width / 2));
     const ty = Math.max(0, Math.min(this.mapH - World.Height, this.kidY - World.Height * 0.55));
     const k = Math.min(1, dt * 8);
     this.camX += (tx - this.camX) * k;
     this.camY += (ty - this.camY) * k;
-    if (this.mapH < World.Height) this.camY = (this.mapH - World.Height) / 2;
   }
 
-  private stepKid(): void {
-    const nc = this.kc + this.dir[0], nr = this.kr + this.dir[1];
-    if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.rows) return;   // 맵 끝
-    const cell = this.at(nc, nr);
-    if (cell === TRAIL) { this.hit(); return; }
-    if (!this.drawing && cell === SEA) {
-      this.drawing = true;
-      this.startC = this.kc; this.startR = this.kr;
+  private stepPlayer(p: Player): void {
+    const nc = p.c + p.dir[0], nr = p.r + p.dir[1];
+    if (!this.inside(nc, nr)) { if (p.id !== KID) p.plan = []; return; }
+    const i = this.idx(nc, nr);
+    const t = this.trail[i];
+    if (t >= 0) {   // 선을 밟음: 그 선의 주인이 죽음 (자기 선이면 자기)
+      this.killPlayer(t, p.id);
+      if (!p.alive || (p.id === KID && this.hurtTimer > 0)) return;
     }
-    this.kc = nc; this.kr = nr;
-    if (this.drawing) {
-      if (cell === SEA) {
-        this.cells[nr * this.cols + nc] = TRAIL;
-        this.trail.push(nr * this.cols + nc);
-        this.version++;
-      } else this.closeTrail();
-    }
+    const wasHome = this.owner[this.idx(p.c, p.r)] === p.id;
+    if (wasHome && this.owner[i] !== p.id) { p.leaveC = p.c; p.leaveR = p.r; }
+    p.c = nc; p.r = nr;
+    if (this.owner[i] !== p.id) {
+      this.trail[i] = p.id;
+      p.trail.push(i);
+      this.version++;
+    } else if (p.trail.length > 0) this.close(p);
   }
 
-  // 선을 땅으로 만들고, 악마가 없는 바다를 모두 채움
-  private closeTrail(): void {
-    for (const i of this.trail) this.cells[i] = LAND;
-    const gainedTrail = this.trail.length;
-    this.trail = [];
-    this.drawing = false;
-    const seen = new Uint8Array(this.cells.length);
+  // 선을 자기 땅으로 만들고, 둘러싼 곳을 모두 차지
+  private close(p: Player): void {
+    const id = p.id;
+    for (const i of p.trail) { this.owner[i] = id; this.trail[i] = -1; }
+    p.trail = [];
+    // 맵 가장자리에서 자기 땅이 아닌 칸을 따라 퍼져 나가며 표시. 못 닿은 곳은 둘러싸인 곳
+    const C = this.cols, R = this.rows, N = C * R;
+    const seen = new Uint8Array(N);
     const stack: number[] = [];
-    for (const d of this.devils) {
-      if (d.land) continue;
-      const i = this.cellIndex(d.x, d.y);
-      if (i >= 0 && this.cells[i] === SEA && !seen[i]) { seen[i] = 1; stack.push(i); }
-    }
-    const C = this.cols;
+    const push = (i: number) => { if (!seen[i] && this.owner[i] !== id) { seen[i] = 1; stack.push(i); } };
+    for (let c = 0; c < C; c++) { push(c); push((R - 1) * C + c); }
+    for (let r = 0; r < R; r++) { push(r * C); push(r * C + C - 1); }
     while (stack.length) {
       const i = stack.pop()!;
       const c = i % C, r = (i - c) / C;
-      if (c > 0 && !seen[i - 1] && this.cells[i - 1] === SEA) { seen[i - 1] = 1; stack.push(i - 1); }
-      if (c < C - 1 && !seen[i + 1] && this.cells[i + 1] === SEA) { seen[i + 1] = 1; stack.push(i + 1); }
-      if (r > 0 && !seen[i - C] && this.cells[i - C] === SEA) { seen[i - C] = 1; stack.push(i - C); }
-      if (r < this.rows - 1 && !seen[i + C] && this.cells[i + C] === SEA) { seen[i + C] = 1; stack.push(i + C); }
+      if (c > 0) push(i - 1);
+      if (c < C - 1) push(i + 1);
+      if (r > 0) push(i - C);
+      if (r < R - 1) push(i + C);
     }
     const filled: number[] = [];
-    for (let i = 0; i < this.cells.length; i++) if (this.cells[i] === SEA && !seen[i]) { this.cells[i] = LAND; filled.push(i); }
-    const gained = gainedTrail + filled.length;
-    this.landN += gained;
-    this.version++;
-    this.flash = { idx: filled, t: 0.35 };
-    this.devils = this.devils.filter((d) => d.land || this.cells[this.cellIndex(d.x, d.y)] !== LAND);
-    if (gained > 0) this.host.claim(gained);
-    if (this.percent >= GOAL) {
-      this.clearTimer = CLEAR_PAUSE;
-      this.host.stageClear();
+    let gained = 0;
+    for (let i = 0; i < N; i++) {
+      if (seen[i] || this.owner[i] === id) continue;
+      this.owner[i] = id;
+      gained++;
+      if (id === KID) filled.push(i);
+      // 둘러싼 곳 안에 다른 이의 선이 있으면 그 주인은 죽음
+      const t = this.trail[i];
+      if (t >= 0 && t !== id) this.killPlayer(t, id);
     }
-  }
-
-  // 악마: 바다 악마는 땅에서, 땅 악마는 바다에서 튕김
-  private moveDevils(dt: number): void {
-    for (const d of this.devils) {
-      const steps = Math.max(1, Math.ceil(Math.hypot(d.vx, d.vy) * dt / 4));
-      const wall = (x: number, y: number) => {
-        if (x < 0 || y < 0 || x >= this.mapW || y >= this.mapH) return true;
-        const v = this.at(Math.floor(x / CC), Math.floor(y / CC));
-        return d.land ? v !== LAND : v === LAND;
-      };
-      const R = d.land ? CC * 0.45 : DEVIL_R * 0.6;   // 벽 판정은 조금 작게 (좁은 바다에도 들어가게)
-      for (let s = 0; s < steps; s++) {
-        const sdt = dt / steps;
-        const nx = d.x + d.vx * sdt;
-        if (wall(nx + Math.sign(d.vx) * R, d.y)) d.vx = -d.vx; else d.x = nx;
-        const ny = d.y + d.vy * sdt;
-        if (wall(d.x, ny + Math.sign(d.vy) * R)) d.vy = -d.vy; else d.y = ny;
-        if (this.hurtTimer > 0 || this.clearTimer > 0) continue;
-        if (!d.land && this.trail.length > 0) {
-          for (const [ox, oy] of [[0, 0], [DEVIL_R, 0], [-DEVIL_R, 0], [0, DEVIL_R], [0, -DEVIL_R]]) {
-            const i = this.cellIndex(d.x + ox, d.y + oy);
-            if (i >= 0 && this.cells[i] === TRAIL) { this.hit(); break; }
-          }
-        }
-        if (this.hurtTimer > 0) continue;
-        if ((d.land || this.drawing) && Math.hypot(d.x - this.kidX, d.y - this.kidY) < DEVIL_R + CC * 0.6) this.hit();
+    this.version++;
+    this.recount();
+    if (id === KID) {
+      this.flash = { idx: filled, t: 0.35 };
+      this.host.claim(gained);
+      if (this.percent >= GOAL) { this.clearTimer = CLEAR_PAUSE; this.host.stageClear(); }
+    }
+    // 땅을 모두 빼앗긴 악마는 사라짐, 꼬마는 끝
+    for (const q of this.players) {
+      if (!q.alive || q.id === id) continue;
+      if ((this.counts[q.id] ?? 0) === 0 && q.trail.length === 0) {
+        if (q.id === KID) { this.lives = 0; this.host.gameOver(); return; }
+        this.killPlayer(q.id, id);
       }
     }
   }
 
-  private hit(): void {
-    if (this.hurtTimer > 0) return;
-    this.lives--;
-    this.host.hurt();
-    for (const i of this.trail) this.cells[i] = SEA;
-    this.trail = [];
+  private clearTrail(p: Player): void {
+    for (const i of p.trail) if (this.trail[i] === p.id) this.trail[i] = -1;
+    p.trail = [];
     this.version++;
-    if (this.drawing) { this.kc = this.startC; this.kr = this.startR; }
-    this.drawing = false;
-    this.dir = [0, 0];
-    this.hurtTimer = HURT_PAUSE;
-    if (this.lives <= 0) { this.hurtTimer = 0; this.host.gameOver(); }
+  }
+
+  private killPlayer(id: number, by: number): void {
+    const p = this.players[id];
+    if (!p || !p.alive) return;
+    if (id === KID) {
+      if (this.hurtTimer > 0) return;
+      this.lives--;
+      this.host.hurt();
+      this.clearTrail(p);
+      p.c = p.leaveC; p.r = p.leaveR;
+      p.dir = [0, 0];
+      this.hurtTimer = HURT_PAUSE;
+      // 돌아간 칸이 이미 남의 땅이면 남은 내 땅 아무 곳으로
+      if (this.owner[this.idx(p.c, p.r)] !== KID) {
+        const mine = this.owner.findIndex((o) => o === KID);
+        if (mine >= 0) { p.c = mine % this.cols; p.r = Math.floor(mine / this.cols); }
+      }
+      if (this.lives <= 0 || (this.counts[KID] ?? 0) === 0) { this.lives = 0; this.host.gameOver(); }
+      return;
+    }
+    // 악마: 선과 땅이 함께 사라짐
+    this.clearTrail(p);
+    for (let i = 0; i < this.owner.length; i++) if (this.owner[i] === id) this.owner[i] = -1;
+    p.alive = false;
+    p.respawn = RESPAWN;
+    this.recount();
+    this.version++;
+    if (by === KID) { this.kills++; this.host.kill(); }
+  }
+
+  private respawnDevil(p: Player): void {
+    const spot = this.freeSpot(DEVIL_HOME + 2);
+    if (!spot) { p.respawn = 1; return; }
+    const q = this.newPlayer(p.id, spot[0], spot[1], DEVIL_HOME);
+    this.players[p.id] = q;
+    this.recount();
+    this.version++;
+  }
+
+  // ---------- 악마 생각 ----------
+  private think(p: Player, dt: number): void {
+    p.wait -= dt;
+    const home = this.owner[this.idx(p.c, p.r)] === p.id;
+    const kid = this.kid;
+
+    // 꼬마 선이 가까우면 끊으러 감
+    if (kid.trail.length > 0 && this.hurtTimer <= 0 && p.trail.length < 8) {
+      let best = -1, bd = Math.min(8, 5 + this.stage);   // 스테이지가 오를수록 멀리서도 알아챔
+      for (const i of kid.trail) {
+        const d = Math.abs(i % this.cols - p.c) + Math.abs(Math.floor(i / this.cols) - p.r);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best >= 0) { p.mode = 'hunt'; this.headTo(p, best % this.cols, Math.floor(best / this.cols)); return; }
+    }
+    if (p.mode === 'hunt') p.mode = p.trail.length > 0 ? 'return' : 'home';
+
+    // 밖에 오래 있거나 꼬마가 가까이 오면 집으로
+    if (p.trail.length > 0) {
+      const near = Math.abs(kid.c - p.c) + Math.abs(kid.r - p.r) < 6;
+      if (p.mode === 'out' && (p.plan.length === 0 || near || p.trail.length > 28)) { p.mode = 'return'; p.plan = []; }
+      if (p.mode === 'return') { this.headHome(p); return; }
+    }
+    if (home && p.trail.length === 0 && p.mode !== 'out') {
+      p.mode = 'home';
+      if (p.wait > 0) { p.dir = [0, 0]; return; }
+      // 나갈 계획: 바깥쪽으로 몇 칸, 옆으로 몇 칸, 그리고 집으로
+      const d1 = DIRS[randInt(0, 3)];
+      const d2: [number, number] = d1[0] === 0 ? [Math.random() < 0.5 ? 1 : -1, 0] : [0, Math.random() < 0.5 ? 1 : -1];
+      const reach = Math.min(10, 3 + this.stage);
+      p.plan = [[d1[0], d1[1], randInt(3, reach + 3)], [d2[0], d2[1], randInt(3, reach + 4)]];
+      p.mode = 'out';
+      p.wait = rand(0.1, 0.8);
+    }
+    if (p.mode === 'out') {
+      while (p.plan.length && p.plan[0][2] <= 0) p.plan.shift();
+      if (!p.plan.length) { p.mode = 'return'; this.headHome(p); return; }
+      const step = p.plan[0];
+      const nc = p.c + step[0], nr = p.r + step[1];
+      if (!this.inside(nc, nr) || this.trail[this.idx(nc, nr)] === p.id) { p.plan.shift(); return; }
+      if (dt === 0) step[2]--;   // 칸을 옮길 때만 줄임
+      p.dir = [step[0], step[1]];
+    }
+  }
+
+  // 가장 가까운 자기 땅으로
+  private headHome(p: Player): void {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < this.owner.length; i++) {
+      if (this.owner[i] !== p.id) continue;
+      const d = Math.abs(i % this.cols - p.c) + Math.abs(Math.floor(i / this.cols) - p.r);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best < 0) return;
+    this.headTo(p, best % this.cols, Math.floor(best / this.cols));
+  }
+
+  // 목표 칸 쪽으로 한 칸 (자기 선은 피하고, 되돌아가지 않음)
+  private headTo(p: Player, tc: number, tr: number): void {
+    let best: [number, number] | null = null, bd = Infinity;
+    for (const d of DIRS) {
+      if (p.trail.length > 0 && d[0] === -p.dir[0] && d[1] === -p.dir[1]) continue;
+      const nc = p.c + d[0], nr = p.r + d[1];
+      if (!this.inside(nc, nr) || this.trail[this.idx(nc, nr)] === p.id) continue;
+      const dist = Math.abs(tc - nc) + Math.abs(tr - nr) + Math.random() * 0.3;
+      if (dist < bd) { bd = dist; best = d; }
+    }
+    p.dir = best ? [best[0], best[1]] : [0, 0];
   }
 }
