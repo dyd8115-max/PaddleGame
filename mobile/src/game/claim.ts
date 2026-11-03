@@ -30,8 +30,8 @@ export const GOAL = 0.5;
 const CLEAR_PAUSE = 1.8;
 const HURT_PAUSE = 1.0;
 const RESPAWN = 3;
-const KID_HOME = 3;                    // 시작 땅 반지름 (칸): 7×7
-const DEVIL_HOME = 2;                  // 5×5
+const KID_HOME = 4;                    // 시작 땅 반지름 (칸, 동그라미)
+const DEVIL_HOME = 3;
 
 export const KID = 0;
 export const PLAYER_COLORS = ['#4aa8ff', '#ff5a5a', '#b26bff', '#ff9a3c', '#ff6fb5', '#3ccf8e', '#e6d23c', '#8a8aff'];
@@ -111,8 +111,9 @@ export class Claim {
   }
 
   private newPlayer(id: number, c: number, r: number, home: number): Player {
+    // 시작 땅은 동그랗게
     for (let y = r - home; y <= r + home; y++) for (let x = c - home; x <= c + home; x++) {
-      if (this.inside(x, y)) this.owner[this.idx(x, y)] = id;
+      if (this.inside(x, y) && (x - c) ** 2 + (y - r) ** 2 <= (home + 0.5) ** 2) this.owner[this.idx(x, y)] = id;
     }
     const devilSpeed = Math.min(10, 7 + this.stage * 0.5);
     return {

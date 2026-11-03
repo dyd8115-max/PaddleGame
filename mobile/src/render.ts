@@ -234,6 +234,137 @@ function drawClaimDevil(ctx: Ctx, c: Claim, p: Player, t: number): void {
   }
 }
 
+// 칸마다 정해진 0~1 값 (물감 번짐이 매 프레임 같은 모양이게)
+function hash01(i: number): number {
+  let h = (i * 2654435761) >>> 0;
+  h ^= h >>> 13; h = Math.imul(h, 1274126177) >>> 0; h ^= h >>> 16;
+  return (h % 1000) / 1000;
+}
+
+// 땅을 물감처럼: 안쪽 칸은 네모로 채우고, 가장자리 칸은 조금씩 다른 동그라미로 번지게.
+// 아래쪽 가장자리엔 그림자와 흘러내린 방울, 군데군데 반짝이는 윤기
+function paintLand(ctx: Ctx, c: Claim, c0: number, c1: number, r0: number, r1: number, t: number): void {
+  const C = c.cols;
+  const own = (col: number, r: number) => (col < 0 || col >= C || r < 0 || r >= c.rows ? -2 : c.owner[r * C + col]);
+  const edges: number[] = [];
+  for (let r = Math.max(0, r0 - 1); r <= Math.min(c.rows - 1, r1 + 1); r++) {
+    for (let col = Math.max(0, c0 - 1); col <= Math.min(C - 1, c1 + 1); col++) {
+      const o = own(col, r);
+      if (o < 0) continue;
+      let edge = false;   // 둘레 8칸 중 하나라도 다르면 가장자리 (대각선 쪽 모서리도 둥글게)
+      for (let dy = -1; dy <= 1 && !edge; dy++) for (let dx = -1; dx <= 1; dx++) if (own(col + dx, r + dy) !== o) { edge = true; break; }
+      if (edge) edges.push(r * C + col);
+    }
+  }
+  const blob = (i: number) => {
+    const col = i % C, r = (i - col) / C, h = hash01(i), h2 = hash01(i + 7777);
+    return { x: (col + 0.5) * CC + (h - 0.5) * 4, y: (r + 0.5) * CC + (h2 - 0.5) * 4, rad: CC * (0.72 + h * 0.22) };
+  };
+  // 그림자 (아래로 조금)
+  for (const i of edges) {
+    const o = c.owner[i], b = blob(i);
+    ctx.fillStyle = shade(PLAYER_COLORS[o % PLAYER_COLORS.length], -0.4);
+    ctx.beginPath(); ctx.arc(b.x, b.y + 4, b.rad, 0, Math.PI * 2); ctx.fill();
+  }
+  // 흘러내린 방울: 아래가 비어 있는 가장자리 칸 몇 군데
+  for (const i of edges) {
+    const col = i % C, r = (i - col) / C, o = c.owner[i];
+    if (own(col, r + 1) === o) continue;
+    const h = hash01(i + 333);
+    if (h < 0.72) continue;
+    const len = 6 + h * 14 + Math.sin(t * 1.5 + i) * 1.5;
+    const x = (col + 0.5) * CC + (hash01(i + 5) - 0.5) * 6, y = (r + 0.5) * CC;
+    ctx.fillStyle = shade(PLAYER_COLORS[o % PLAYER_COLORS.length], -0.12);
+    ctx.fillRect(x - 3, y, 6, CC * 0.5 + len);
+    ctx.beginPath(); ctx.arc(x, y + CC * 0.5 + len, 4.2, 0, Math.PI * 2); ctx.fill();
+  }
+  // 안쪽: 줄마다 같은 주인끼리 이어서 네모로
+  for (let r = r0; r <= r1; r++) {
+    let s0 = -1, cur = -1;
+    for (let col = c0; col <= c1 + 1; col++) {
+      const o = col <= c1 ? c.owner[r * C + col] : -1;
+      if (o !== cur) {
+        if (cur >= 0) { ctx.fillStyle = PLAYER_COLORS[cur % PLAYER_COLORS.length]; ctx.fillRect(s0 * CC - 0.5, r * CC - 0.5, (col - s0) * CC + 1, CC + 1); }   // 살짝 겹쳐 줄 사이 틈이 안 보이게
+        cur = o; s0 = col;
+      }
+    }
+  }
+  // 가장자리: 동그라미로 번짐
+  for (const i of edges) {
+    const o = c.owner[i], b = blob(i);
+    ctx.fillStyle = PLAYER_COLORS[o % PLAYER_COLORS.length];
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.rad, 0, Math.PI * 2); ctx.fill();
+  }
+  // 윤기: 몇몇 가장자리에 밝은 점
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  for (const i of edges) {
+    if (hash01(i + 99) < 0.8) continue;
+    const b = blob(i);
+    ctx.beginPath(); ctx.ellipse(b.x - 3, b.y - 4, 4, 2.4, -0.5, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 물감 붓질: 어두운 테두리 + 밝은 몸 + 가운데 윤기
+function paintStroke(ctx: Ctx, pts: { x: number; y: number }[], hx: number, hy: number, color: string): void {
+  if (pts.length === 0) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (const q of pts) ctx.lineTo(q.x, q.y);
+    ctx.lineTo(hx, hy);
+  };
+  path(); ctx.strokeStyle = shade(color, -0.25); ctx.lineWidth = CC * 0.85; ctx.stroke();
+  path(); ctx.strokeStyle = shade(color, 0.35); ctx.lineWidth = CC * 0.62; ctx.stroke();
+  path(); ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = CC * 0.16; ctx.stroke();
+  ctx.restore();
+}
+
+// 물감 방울 효과: 꼬마·악마가 움직이면 방울이 튀고, 땅을 차지하면 물감이 팍 튐
+interface Drop { x: number; y: number; vx: number; vy: number; r: number; color: string; life: number; max: number; }
+const paint = { claim: null as Claim | null, drops: [] as Drop[], lastT: 0, lastFlash: null as object | null };
+function paintFx(ctx: Ctx, c: Claim, t: number): void {
+  if (paint.claim !== c) { paint.claim = c; paint.drops = []; paint.lastT = t; paint.lastFlash = c.flash; }
+  const dt = Math.min(0.05, Math.max(0, t - paint.lastT));
+  paint.lastT = t;
+  const add = (x: number, y: number, color: string, speed: number, r: number, life: number) => {
+    const a = Math.random() * Math.PI * 2, s = speed * (0.4 + Math.random() * 0.6);
+    paint.drops.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - speed * 0.3, r, color, life, max: life });
+  };
+  // 움직일 때 발밑에서 튀는 방울
+  for (const p of c.players) {
+    if (!p.alive) continue;
+    const moving = p.id === KID ? c.moving : (p.dir[0] !== 0 || p.dir[1] !== 0);
+    if (!moving || Math.random() > (p.id === KID ? 0.6 : 0.25)) continue;
+    add(c.headX(p) + (Math.random() - 0.5) * 10, c.headY(p) + (Math.random() - 0.5) * 10, PLAYER_COLORS[p.id % PLAYER_COLORS.length], 40, 1.5 + Math.random() * 2.5, 0.45);
+  }
+  // 땅을 차지한 순간: 새 땅 곳곳에서 물감이 팍
+  if (c.flash !== paint.lastFlash) {
+    paint.lastFlash = c.flash;
+    const idx = c.flash.idx;
+    for (let k = 0; k < Math.min(40, idx.length); k++) {
+      const i = idx[Math.floor(Math.random() * idx.length)];
+      add((i % c.cols + 0.5) * CC, (Math.floor(i / c.cols) + 0.5) * CC, PLAYER_COLORS[KID], 140, 3 + Math.random() * 4, 0.7);
+    }
+    if (idx.length > 0) for (let k = 0; k < 16; k++) add(c.kidX, c.kidY, shade(PLAYER_COLORS[KID], 0.3), 220, 3 + Math.random() * 3, 0.6);
+  }
+  const keep: Drop[] = [];
+  for (const d of paint.drops) {
+    d.life -= dt;
+    if (d.life <= 0) continue;
+    d.x += d.vx * dt; d.y += d.vy * dt; d.vy += 300 * dt; d.vx *= 0.96;
+    const k = d.life / d.max;
+    ctx.globalAlpha = Math.min(1, k * 1.6);
+    ctx.fillStyle = d.color;
+    ctx.beginPath(); ctx.arc(d.x, d.y, d.r * (0.6 + 0.4 * k), 0, Math.PI * 2); ctx.fill();
+    keep.push(d);
+  }
+  ctx.globalAlpha = 1;
+  paint.drops = keep.length > 400 ? keep.slice(-400) : keep;
+}
+
 function drawClaim(ctx: Ctx, game: Game, v: View): void {
   const c = game.claim!;
   ctx.save();
@@ -248,53 +379,17 @@ function drawClaim(ctx: Ctx, game: Game, v: View): void {
   for (let col = c0; col <= c1; col++) ctx.fillRect(col * CC, r0 * CC, 1, (r1 - r0 + 1) * CC);
   for (let r = r0; r <= r1; r++) ctx.fillRect(c0 * CC, r * CC, (c1 - c0 + 1) * CC, 1);
 
-  // 땅과 선: 줄마다 같은 주인끼리 이어서. 땅 아래쪽 가장자리는 진하게 (두께감)
-  const drawRuns = (arr: Int8Array, color: (o: number) => string, inset: number) => {
-    for (let r = r0; r <= r1; r++) {
-      let s0 = -1, cur = -1;
-      for (let col = c0; col <= c1 + 1; col++) {
-        const o = col <= c1 ? arr[r * c.cols + col] : -1;
-        if (o !== cur) {
-          if (cur >= 0) { ctx.fillStyle = color(cur); ctx.fillRect(s0 * CC + inset, r * CC + inset, (col - s0) * CC - inset * 2, CC - inset * 2); }
-          cur = o; s0 = col;
-        }
-      }
-    }
-  };
-  // 두께: 아래 칸이 다른 주인인 땅 칸 밑에 진한 띠
-  for (let r = r0; r <= r1; r++) {
-    for (let col = c0; col <= c1; col++) {
-      const o = c.owner[r * c.cols + col];
-      if (o < 0) continue;
-      const below = r + 1 < c.rows ? c.owner[(r + 1) * c.cols + col] : -2;
-      if (below !== o) { ctx.fillStyle = shade(PLAYER_COLORS[o % PLAYER_COLORS.length], -0.35); ctx.fillRect(col * CC, (r + 1) * CC, CC, 5); }
-    }
+  // 땅과 선 (물감 느낌)
+  paintLand(ctx, c, c0, c1, r0, r1, v.time);
+  // 악마 선: 지나간 칸을 이어 굵은 물감 선
+  for (const p of c.players) {
+    if (p.id === KID || !p.alive || p.trail.length === 0) continue;
+    paintStroke(ctx, p.trail.map((i) => ({ x: (i % c.cols + 0.5) * CC, y: (Math.floor(i / c.cols) + 0.5) * CC })), c.headX(p), c.headY(p), PLAYER_COLORS[p.id % PLAYER_COLORS.length]);
   }
-  drawRuns(c.owner, (o) => PLAYER_COLORS[o % PLAYER_COLORS.length], 0);
-  drawRuns(c.trail, (o) => (o === KID ? 'rgba(0,0,0,0)' : shade(PLAYER_COLORS[o % PLAYER_COLORS.length], 0.45)), 2);
-  // 꼬마 선: 지나간 자리를 따라 부드러운 굵은 선
-  if (c.kidPath.length > 0) {
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = shade(PLAYER_COLORS[KID], 0.45);
-    ctx.lineWidth = CC * 0.75;
-    ctx.beginPath();
-    ctx.moveTo(c.kidPath[0].x, c.kidPath[0].y);
-    for (const q of c.kidPath) ctx.lineTo(q.x, q.y);
-    ctx.lineTo(c.kidX, c.kidY);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // 방금 차지한 곳 반짝
-  if (c.flash.t > 0) {
-    ctx.fillStyle = `rgba(255,255,255,${c.flash.t * 1.5})`;
-    for (const i of c.flash.idx) {
-      const col = i % c.cols, r = (i - col) / c.cols;
-      if (col >= c0 && col <= c1 && r >= r0 && r <= r1) ctx.fillRect(col * CC, r * CC, CC, CC);
-    }
-  }
+  // 꼬마 선: 지나간 자리를 따라 부드러운 물감 선
+  if (c.kidPath.length > 0) paintStroke(ctx, c.kidPath, c.kidX, c.kidY, PLAYER_COLORS[KID]);
+  // 물감 방울
+  paintFx(ctx, c, v.time);
 
   // 악마
   for (const p of c.players) {
