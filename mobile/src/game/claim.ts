@@ -359,70 +359,162 @@ export class Claim {
   // ---------- 악마 생각 ----------
   private think(p: Player, dt: number): void {
     p.wait -= dt;
-    const home = this.owner[this.idx(p.c, p.r)] === p.id;
+    // 무거운 판단은 칸을 옮기기 직전(dt = 0)이나 멈춰 있을 때만
+    if (dt > 0 && (p.dir[0] !== 0 || p.dir[1] !== 0)) return;
+    if (p.wait > 0 && p.trail.length === 0 && p.mode === 'home') { p.dir = [0, 0]; return; }
+    this.decide(p);
+  }
+
+  // 악마 판단
+  // 1) 꼬마 선을 꼬마가 집에 가기 전에 끊을 수 있으면 끊으러 감
+  // 2) 밖에 나와 있으면: 꼬마가 내 선에 닿는 시간과 내가 집에 가는 시간을 견줘서 위험하면 바로 집으로
+  // 3) 집에 있으면: 빈 곳(또는 꼬마 땅) 쪽으로 고리 모양 계획을 세워 나감. 꼬마가 가까우면 작게, 멀면 크게
+  private decide(p: Player): void {
     const kid = this.kid;
+    const outside = p.trail.length > 0;
 
-    // 꼬마 선이 가까우면 끊으러 감
-    if (kid.trail.length > 0 && this.hurtTimer <= 0 && p.trail.length < 8) {
-      let best = -1, bd = Math.min(8, 5 + this.stage);   // 스테이지가 오를수록 멀리서도 알아챔
-      for (const i of kid.trail) {
-        const d = Math.abs(i % this.cols - p.c) + Math.abs(Math.floor(i / this.cols) - p.r);
-        if (d < bd) { bd = d; best = i; }
+    if (kid.trail.length > 0 && this.hurtTimer <= 0) {
+      const hunt = this.bfs(p, (i) => this.trail[i] === KID, 22);
+      if (hunt.dir) {
+        const kidHome = this.nearestOwned(kid.c, kid.r, KID);
+        const iGet = hunt.dist / p.speed, kidGets = kidHome / KID_SPEED;
+        const safe = !outside || this.threat(p) / KID_SPEED > this.bfs(p, (i) => this.owner[i] === p.id, 90).dist / p.speed;
+        if (iGet < kidGets + 0.25 && safe) { p.mode = 'hunt'; p.dir = hunt.dir; return; }
       }
-      if (best >= 0) { p.mode = 'hunt'; this.headTo(p, best % this.cols, Math.floor(best / this.cols)); return; }
     }
-    if (p.mode === 'hunt') p.mode = p.trail.length > 0 ? 'return' : 'home';
+    if (p.mode === 'hunt') { p.mode = outside ? 'return' : 'home'; p.plan = []; }
 
-    // 밖에 오래 있거나 꼬마가 가까이 오면 집으로
-    if (p.trail.length > 0) {
-      const near = Math.abs(kid.c - p.c) + Math.abs(kid.r - p.r) < 6;
-      if (p.mode === 'out' && (p.plan.length === 0 || near || p.trail.length > 28)) { p.mode = 'return'; p.plan = []; }
-      if (p.mode === 'return') { this.headHome(p); return; }
+    if (outside) {
+      const home = this.bfs(p, (i) => this.owner[i] === p.id, 120);
+      const tHome = home.dist / p.speed, tKid = this.threat(p) / KID_SPEED;
+      const tooLong = p.trail.length > 24 + this.stage * 4;
+      if (p.mode !== 'out' || !p.plan.length || tKid < tHome + 0.7 || tooLong) {
+        p.mode = 'return';
+        p.plan = [];
+        p.dir = home.dir ?? this.anySafeDir(p);
+        return;
+      }
+      this.followPlan(p);
+      return;
     }
-    if (home && p.trail.length === 0 && p.mode !== 'out') {
+
+    // 집에 있음. 막 돌아왔으면 잠깐 쉼 (스테이지가 오를수록 짧게)
+    if (p.mode === 'return') {
       p.mode = 'home';
-      if (p.wait > 0) { p.dir = [0, 0]; return; }
-      // 나갈 계획: 바깥쪽으로 몇 칸, 옆으로 몇 칸, 그리고 집으로
-      const d1 = DIRS[randInt(0, 3)];
-      const d2: [number, number] = d1[0] === 0 ? [Math.random() < 0.5 ? 1 : -1, 0] : [0, Math.random() < 0.5 ? 1 : -1];
-      const reach = Math.min(10, 3 + this.stage);
-      p.plan = [[d1[0], d1[1], randInt(3, reach + 3)], [d2[0], d2[1], randInt(3, reach + 4)]];
-      p.mode = 'out';
-      p.wait = rand(0.1, 0.8);
+      p.wait = rand(0.7, 1.6) * Math.max(0.25, 1 - 0.15 * (this.stage - 1));
     }
-    if (p.mode === 'out') {
-      while (p.plan.length && p.plan[0][2] <= 0) p.plan.shift();
-      if (!p.plan.length) { p.mode = 'return'; this.headHome(p); return; }
-      const step = p.plan[0];
-      const nc = p.c + step[0], nr = p.r + step[1];
-      if (!this.inside(nc, nr) || this.trail[this.idx(nc, nr)] === p.id) { p.plan.shift(); return; }
-      if (dt === 0) step[2]--;   // 칸을 옮길 때만 줄임
-      p.dir = [step[0], step[1]];
+    if (p.mode !== 'out' || !p.plan.length) {
+      if (p.wait > 0) { p.mode = 'home'; p.dir = [0, 0]; return; }
+      this.makePlan(p);
     }
+    this.followPlan(p);
   }
 
-  // 가장 가까운 자기 땅으로
-  private headHome(p: Player): void {
-    let best = -1, bd = Infinity;
-    for (let i = 0; i < this.owner.length; i++) {
-      if (this.owner[i] !== p.id) continue;
-      const d = Math.abs(i % this.cols - p.c) + Math.abs(Math.floor(i / this.cols) - p.r);
-      if (d < bd) { bd = d; best = i; }
+  private followPlan(p: Player): void {
+    while (p.plan.length && p.plan[0][2] <= 0) p.plan.shift();
+    if (!p.plan.length) {   // 계획을 다 했으면 집으로 (밖이면 다음 판단에서 돌아감)
+      const home = this.bfs(p, (i) => this.owner[i] === p.id, 120);
+      p.mode = p.trail.length > 0 ? 'return' : 'home';
+      p.dir = p.trail.length > 0 ? (home.dir ?? this.anySafeDir(p)) : [0, 0];
+      return;
     }
-    if (best < 0) return;
-    this.headTo(p, best % this.cols, Math.floor(best / this.cols));
+    const leg = p.plan[0];
+    const nc = p.c + leg[0], nr = p.r + leg[1];
+    if (!this.inside(nc, nr) || this.trail[this.idx(nc, nr)] === p.id) { p.plan.shift(); this.followPlan(p); return; }
+    if (this.owner[this.idx(nc, nr)] !== p.id) leg[2]--;   // 밖으로 나간 칸만 셈
+    p.dir = [leg[0], leg[1]];
+    p.mode = 'out';
   }
 
-  // 목표 칸 쪽으로 한 칸 (자기 선은 피하고, 되돌아가지 않음)
-  private headTo(p: Player, tc: number, tr: number): void {
-    let best: [number, number] | null = null, bd = Infinity;
+  // 나갈 방향과 크기 정하기
+  private makePlan(p: Player): void {
+    // 내 땅 가운데
+    let sx = 0, sy = 0, n = 0;
+    for (let i = 0; i < this.owner.length; i += 1) if (this.owner[i] === p.id) { sx += i % this.cols; sy += Math.floor(i / this.cols); n++; }
+    const cx = n ? sx / n : p.c, cy = n ? sy / n : p.r;
+    const kid = this.kid;
+    let best: [number, number] = DIRS[0], bs = -Infinity;
     for (const d of DIRS) {
-      if (p.trail.length > 0 && d[0] === -p.dir[0] && d[1] === -p.dir[1]) continue;
-      const nc = p.c + d[0], nr = p.r + d[1];
-      if (!this.inside(nc, nr) || this.trail[this.idx(nc, nr)] === p.id) continue;
-      const dist = Math.abs(tc - nc) + Math.abs(tr - nr) + Math.random() * 0.3;
-      if (dist < bd) { bd = dist; best = d; }
+      // 그 방향 앞쪽 몇 칸이 얼마나 비었는지, 꼬마 땅이 있는지 (뺏을 거리)
+      let open = 0, steal = 0, edge = false;
+      for (let k = 1; k <= 8; k++) {
+        const c = p.c + d[0] * k, r = p.r + d[1] * k;
+        if (!this.inside(c, r)) { edge = true; break; }
+        const o = this.owner[this.idx(c, r)];
+        if (o !== p.id) open++;
+        if (o === KID) steal++;
+      }
+      const away = d[0] * (p.c - cx) + d[1] * (p.r - cy);
+      const toKid = d[0] * Math.sign(kid.c - p.c) + d[1] * Math.sign(kid.r - p.r);
+      const score = open * 1.2 + steal * 0.8 + away * 0.4 + (edge ? -6 : 0) + toKid * (this.stage >= 2 ? 0.6 : 0) + Math.random() * 3;
+      if (score > bs) { bs = score; best = d; }
     }
-    p.dir = best ? [best[0], best[1]] : [0, 0];
+    const kidDist = Math.abs(kid.c - p.c) + Math.abs(kid.r - p.r);
+    const bold = Math.max(0.25, Math.min(1, (kidDist - 6) / 22));   // 꼬마가 멀수록 크게
+    const a = Math.round(2 + (2 + this.stage) * bold * rand(0.6, 1.2));
+    const b = Math.round(3 + (3 + this.stage) * bold * rand(0.6, 1.2));
+    const side: [number, number] = best[0] === 0 ? [Math.random() < 0.5 ? 1 : -1, 0] : [0, Math.random() < 0.5 ? 1 : -1];
+    p.plan = [[best[0], best[1], a], [side[0], side[1], b], [-best[0], -best[1], a + 2]];
+    p.mode = 'out';
+  }
+
+  // 꼬마가 내 선(또는 머리)에 닿기까지 걸리는 칸 수 (대략)
+  private threat(p: Player): number {
+    const kid = this.kid;
+    if (this.hurtTimer > 0) return 99;
+    let d = Math.abs(kid.c - p.c) + Math.abs(kid.r - p.r);
+    for (const i of p.trail) d = Math.min(d, Math.abs(kid.c - i % this.cols) + Math.abs(kid.r - Math.floor(i / this.cols)));
+    return d;
+  }
+
+  // (c, r) 에서 id 땅까지 가장 가까운 거리 (칸)
+  private nearestOwned(c: number, r: number, id: number): number {
+    let bd = 999;
+    for (let i = 0; i < this.owner.length; i++) {
+      if (this.owner[i] !== id) continue;
+      const d = Math.abs(i % this.cols - c) + Math.abs(Math.floor(i / this.cols) - r);
+      if (d < bd) bd = d;
+    }
+    return bd;
+  }
+
+  // 길 찾기: 자기 선을 피해서 goal 칸까지 가장 짧은 길의 첫 걸음과 거리
+  private bfsQueue = new Int32Array(MAP_COLS * MAP_ROWS);
+  private bfsFirst = new Int8Array(MAP_COLS * MAP_ROWS);
+  private bfsDist = new Int16Array(MAP_COLS * MAP_ROWS);
+  private bfs(p: Player, goal: (i: number) => boolean, maxDist: number): { dir: [number, number] | null; dist: number } {
+    const C = this.cols, R = this.rows;
+    const first = this.bfsFirst, dist = this.bfsDist, q = this.bfsQueue;
+    dist.fill(-1);
+    const s = this.idx(p.c, p.r);
+    dist[s] = 0;
+    let head = 0, tail = 0;
+    q[tail++] = s;
+    while (head < tail) {
+      const i = q[head++];
+      if (i !== s && goal(i)) { const d = DIRS[first[i]]; return { dir: [d[0], d[1]], dist: dist[i] }; }
+      if (dist[i] >= maxDist) continue;
+      const c = i % C, r = (i - c) / C;
+      for (let k = 0; k < 4; k++) {
+        const nc = c + DIRS[k][0], nr = r + DIRS[k][1];
+        if (nc < 0 || nc >= C || nr < 0 || nr >= R) continue;
+        const j = nr * C + nc;
+        if (dist[j] >= 0 || this.trail[j] === p.id) continue;
+        if (i === s && p.trail.length > 0 && DIRS[k][0] === -p.dir[0] && DIRS[k][1] === -p.dir[1]) continue;
+        dist[j] = dist[i] + 1;
+        first[j] = i === s ? k : first[i];
+        q[tail++] = j;
+      }
+    }
+    return { dir: null, dist: 999 };
+  }
+
+  // 갈 곳이 없을 때: 자기 선만 피해서 아무 쪽으로
+  private anySafeDir(p: Player): [number, number] {
+    for (const d of [...DIRS].sort(() => Math.random() - 0.5)) {
+      const nc = p.c + d[0], nr = p.r + d[1];
+      if (this.inside(nc, nr) && this.trail[this.idx(nc, nr)] !== p.id) return [d[0], d[1]];
+    }
+    return [0, 0];
   }
 }
