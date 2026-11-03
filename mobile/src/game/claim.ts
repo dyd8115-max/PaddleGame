@@ -6,7 +6,8 @@
 // - 남의 선을 밟으면 그 선의 주인이 죽는다. 자기 선을 밟아도 죽는다
 //   악마가 꼬마 선을 밟으면 꼬마 목숨 -1 (선은 사라지고 마지막으로 나간 자기 땅으로 돌아감)
 //   꼬마가 악마 선을 밟으면 그 악마는 땅과 함께 사라지고, 잠시 뒤 다른 곳에서 새 악마가 나온다
-// - 화면 어디든 누른 채 상하좌우로 끌면 그쪽으로 걷고, 손을 떼면 멈춘다
+// - 화면 어디든 누른 채 끌면 그 방향으로 자유롭게 걷고(끈 거리만큼 빠르게), 손을 떼면 멈춘다
+//   땅은 칸으로 나뉘어 있고, 꼬마가 지나간 칸에 선이 남는다
 // - 맵의 절반을 차지하면 다음 스테이지. 스테이지마다 악마가 하나씩 늘고 조금 빨라진다
 // - 목숨 3개. 땅을 모두 빼앗겨도 끝. 기록은 도달한 스테이지
 import { World } from './objects';
@@ -22,7 +23,8 @@ export interface ClaimHost {
 export const CC = 16;                  // 칸 크기
 export const MAP_COLS = 60;
 export const MAP_ROWS = 90;
-const KID_SPEED = 10;                  // 초당 칸 수
+const KID_SPEED = 10;                  // 초당 칸 수 (꼬마는 이 빠르기로 자유롭게 움직임)
+const TURN_RATE = 9;                   // 선을 긋는 중 1초에 돌 수 있는 각도 (라디안). 급하게 꺾어 자기 선을 밟지 않게
 const START_LIVES = 3;
 export const GOAL = 0.5;
 const CLEAR_PAUSE = 1.8;
@@ -37,6 +39,7 @@ export const PLAYER_COLORS = ['#4aa8ff', '#ff5a5a', '#b26bff', '#ff9a3c', '#ff6f
 export interface Player {
   id: number;
   c: number; r: number;              // 머리 칸
+  x: number; y: number;              // 그리는 위치 (꼬마는 실제 위치, 악마는 칸을 부드럽게 따라감)
   dir: [number, number];
   alive: boolean;
   respawn: number;
@@ -65,6 +68,7 @@ export class Claim {
   version = 0;
   players: Player[] = [];
   holdDir: [number, number] = [0, 0];
+  kidPath: { x: number; y: number }[] = [];   // 꼬마가 선을 긋는 동안 지나간 실제 자리 (부드러운 선 그리기용)
   clearTimer = 0;
   hurtTimer = 0;
   time = 0;
@@ -82,8 +86,8 @@ export class Claim {
   get mapH(): number { return this.rows * CC; }
   get moving(): boolean { return this.kid.dir[0] !== 0 || this.kid.dir[1] !== 0; }
   get drawing(): boolean { return this.kid.trail.length > 0; }
-  headX(p: Player): number { return (p.c + 0.5) * CC; }
-  headY(p: Player): number { return (p.r + 0.5) * CC; }
+  headX(p: Player): number { return p.x; }
+  headY(p: Player): number { return p.y; }
   get kidX(): number { return this.headX(this.kid); }
   get kidY(): number { return this.headY(this.kid); }
   idx(c: number, r: number): number { return r * this.cols + c; }
@@ -112,7 +116,7 @@ export class Claim {
     }
     const devilSpeed = Math.min(10, 7 + this.stage * 0.5);
     return {
-      id, c, r, dir: [0, 0], alive: true, respawn: 0, trail: [], leaveC: c, leaveR: r, step: 0,
+      id, c, r, x: (c + 0.5) * CC, y: (r + 0.5) * CC, dir: [0, 0], alive: true, respawn: 0, trail: [], leaveC: c, leaveR: r, step: 0,
       speed: id === KID ? KID_SPEED : devilSpeed, plan: [], mode: 'home', wait: rand(0.2, 1.2),
     };
   }
@@ -138,7 +142,9 @@ export class Claim {
   }
 
   // ---------- 조작 ----------
+  // 가고 싶은 방향과 세기 (길이 0~1). [0,0] 이면 멈춤
   hold(dx: number, dy: number): void { this.holdDir = [dx, dy]; }
+  private heading = -Math.PI / 2;
   joyFrom: { x: number; y: number } | null = null;
   joyTo = { x: 0, y: 0 };
   joyBegin(x: number, y: number): void { this.joyFrom = { x, y }; this.joyTo = { x, y }; this.hold(0, 0); }
@@ -148,9 +154,9 @@ export class Claim {
     let dx = x - this.joyFrom.x, dy = y - this.joyFrom.y;
     const len = Math.hypot(dx, dy), max = 50;
     if (len > max) { this.joyFrom = { x: x - dx / len * max, y: y - dy / len * max }; dx = x - this.joyFrom.x; dy = y - this.joyFrom.y; }
-    if (len < 12) this.hold(0, 0);
-    else if (Math.abs(dx) > Math.abs(dy)) this.hold(Math.sign(dx), 0);
-    else this.hold(0, Math.sign(dy));
+    const l = Math.hypot(dx, dy);
+    if (l < 10) this.hold(0, 0);
+    else { const m = Math.min(1, 0.55 + (l - 10) / 60); this.hold(dx / l * m, dy / l * m); }   // 조금만 끌어도 꽤 빠르게
   }
   joyEnd(): void { this.joyFrom = null; this.hold(0, 0); }
 
@@ -166,28 +172,28 @@ export class Claim {
     }
     if (this.hurtTimer > 0) this.hurtTimer -= dt;
 
-    // 꼬마: 선을 긋는 중에 정반대로는 못 감
-    const kid = this.kid;
-    if (this.hurtTimer <= 0) {
-      const [hx, hy] = this.holdDir;
-      const reverse = kid.trail.length > 0 && hx === -kid.dir[0] && hy === -kid.dir[1] && (hx !== 0 || hy !== 0);
-      if (!reverse) kid.dir = [hx, hy];
-    } else kid.dir = [0, 0];
+    this.moveKid(dt);
 
     for (const p of this.players) {
+      if (p.id === KID) continue;
       if (!p.alive) {
         p.respawn -= dt;
         if (p.respawn <= 0) this.respawnDevil(p);
         continue;
       }
-      if (p.id !== KID) this.think(p, dt);
-      if (p.dir[0] === 0 && p.dir[1] === 0) { p.step = Math.min(p.step, 0.6); continue; }
-      p.step += dt * p.speed;
-      while (p.step >= 1 && p.alive && this.clearTimer <= 0) {
-        p.step -= 1;
-        if (p.id !== KID) this.think(p, 0);
-        this.stepPlayer(p);
-      }
+      this.think(p, dt);
+      if (p.dir[0] !== 0 || p.dir[1] !== 0) {
+        p.step += dt * p.speed;
+        while (p.step >= 1 && p.alive && this.clearTimer <= 0) {
+          p.step -= 1;
+          this.think(p, 0);
+          this.stepPlayer(p);
+        }
+      } else p.step = Math.min(p.step, 0.6);
+      // 그리는 위치는 칸 가운데를 부드럽게 따라감
+      const k = Math.min(1, dt * p.speed * 1.6);
+      p.x += ((p.c + 0.5) * CC - p.x) * k;
+      p.y += ((p.r + 0.5) * CC - p.y) * k;
     }
     this.follow(dt);
   }
@@ -200,10 +206,46 @@ export class Claim {
     this.camY += (ty - this.camY) * k;
   }
 
+  // 꼬마: 바라는 방향으로 돌면서(선을 긋는 중엔 천천히) 자유롭게 이동. 칸이 바뀔 때마다 칸 규칙 적용
+  private moveKid(dt: number): void {
+    const kid = this.kid;
+    const [hx, hy] = this.holdDir;
+    const m = Math.hypot(hx, hy);
+    if (this.hurtTimer > 0 || m === 0) { kid.dir = [0, 0]; return; }
+    const want = Math.atan2(hy, hx);
+    if (kid.trail.length > 0) {
+      let d = want - this.heading;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      const maxTurn = TURN_RATE * dt;
+      this.heading += Math.max(-maxTurn, Math.min(maxTurn, d));
+    } else this.heading = want;
+    const ux = Math.cos(this.heading), uy = Math.sin(this.heading);
+    kid.dir = [Math.abs(ux) > 0.2 ? Math.sign(ux) : 0, Math.abs(uy) > 0.2 ? Math.sign(uy) : 0];
+    let dist = KID_SPEED * CC * m * dt;
+    while (dist > 0 && kid.alive && this.hurtTimer <= 0 && this.clearTimer <= 0) {
+      const s = Math.min(3, dist);
+      dist -= s;
+      kid.x = Math.max(1, Math.min(this.mapW - 1, kid.x + ux * s));
+      kid.y = Math.max(1, Math.min(this.mapH - 1, kid.y + uy * s));
+      const nc = Math.floor(kid.x / CC), nr = Math.floor(kid.y / CC);
+      if (nc !== kid.c || nr !== kid.r) this.enterCell(kid, nc, nr);
+      if (kid.trail.length > 0) {
+        const last = this.kidPath[this.kidPath.length - 1];
+        if (!last || Math.hypot(last.x - kid.x, last.y - kid.y) > 4) this.kidPath.push({ x: kid.x, y: kid.y });
+      } else this.kidPath = [];
+    }
+  }
+
   private stepPlayer(p: Player): void {
     const nc = p.c + p.dir[0], nr = p.r + p.dir[1];
-    if (!this.inside(nc, nr)) { if (p.id !== KID) p.plan = []; return; }
+    if (!this.inside(nc, nr)) { p.plan = []; return; }
+    this.enterCell(p, nc, nr);
+  }
+
+  private enterCell(p: Player, nc: number, nr: number): void {
     const i = this.idx(nc, nr);
+    // 꼬마가 막 지나온 선 칸에 다시 들어가는 건 봐줌 (칸 모서리에서 흔들릴 때)
+    if (p.id === KID && this.trail[i] === KID && p.trail.slice(-3).includes(i)) { p.c = nc; p.r = nr; return; }
     const t = this.trail[i];
     if (t >= 0) {   // 선을 밟음: 그 선의 주인이 죽음 (자기 선이면 자기)
       this.killPlayer(t, p.id);
@@ -268,6 +310,7 @@ export class Claim {
   }
 
   private clearTrail(p: Player): void {
+    if (p.id === KID) this.kidPath = [];
     for (const i of p.trail) if (this.trail[i] === p.id) this.trail[i] = -1;
     p.trail = [];
     this.version++;
@@ -283,11 +326,12 @@ export class Claim {
       this.clearTrail(p);
       p.c = p.leaveC; p.r = p.leaveR;
       p.dir = [0, 0];
+      p.x = (p.c + 0.5) * CC; p.y = (p.r + 0.5) * CC;
       this.hurtTimer = HURT_PAUSE;
       // 돌아간 칸이 이미 남의 땅이면 남은 내 땅 아무 곳으로
       if (this.owner[this.idx(p.c, p.r)] !== KID) {
         const mine = this.owner.findIndex((o) => o === KID);
-        if (mine >= 0) { p.c = mine % this.cols; p.r = Math.floor(mine / this.cols); }
+        if (mine >= 0) { p.c = mine % this.cols; p.r = Math.floor(mine / this.cols); p.x = (p.c + 0.5) * CC; p.y = (p.r + 0.5) * CC; }
       }
       if (this.lives <= 0 || (this.counts[KID] ?? 0) === 0) { this.lives = 0; this.host.gameOver(); }
       return;

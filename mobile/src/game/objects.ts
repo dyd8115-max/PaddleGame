@@ -40,7 +40,7 @@ export const Characters = {
     {
       name: 'KID', fps: 15, mode: 'claim', speedMul: 1, paddleW: 80,
       ability: '땅따먹기 · 몇 스테이지까지 갈까',
-      hints: ['화면 어디든 누른 채 끌면 걷고, 떼면 멈춰요', '선으로 둘러싸 땅 차지! 악마 선을 밟으면 처치, 내 선을 밟히면 목숨 -1'],
+      hints: ['화면 어디든 누른 채 끌면 그쪽으로 자유롭게, 떼면 멈춰요', '선으로 둘러싸 땅 차지! 악마 선을 밟으면 처치, 내 선을 밟히면 목숨 -1'],
     },
     {
       name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,

@@ -271,7 +271,21 @@ function drawClaim(ctx: Ctx, game: Game, v: View): void {
     }
   }
   drawRuns(c.owner, (o) => PLAYER_COLORS[o % PLAYER_COLORS.length], 0);
-  drawRuns(c.trail, (o) => shade(PLAYER_COLORS[o % PLAYER_COLORS.length], 0.45), 2);
+  drawRuns(c.trail, (o) => (o === KID ? 'rgba(0,0,0,0)' : shade(PLAYER_COLORS[o % PLAYER_COLORS.length], 0.45)), 2);
+  // 꼬마 선: 지나간 자리를 따라 부드러운 굵은 선
+  if (c.kidPath.length > 0) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = shade(PLAYER_COLORS[KID], 0.45);
+    ctx.lineWidth = CC * 0.75;
+    ctx.beginPath();
+    ctx.moveTo(c.kidPath[0].x, c.kidPath[0].y);
+    for (const q of c.kidPath) ctx.lineTo(q.x, q.y);
+    ctx.lineTo(c.kidX, c.kidY);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // 방금 차지한 곳 반짝
   if (c.flash.t > 0) {

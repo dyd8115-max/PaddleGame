@@ -171,7 +171,15 @@ function movePaddle(x: number): void {
 // 엘프 모드(스와이프): 누른 채 당겨서 조준
 function swipeActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.swipe !== null; }
 // 엘프 모드: 끌어서 이동, 레벨업 카드 고르기
-// 꼬마 땅따먹기: 밀어서 방향 바꾸기
+// 꼬마 땅따먹기: 방향키는 여러 개를 같이 누르면 대각선
+const claimKeys = new Set<string>();
+function claimKeyDir(): void {
+  const x = (claimKeys.has('ArrowRight') ? 1 : 0) - (claimKeys.has('ArrowLeft') ? 1 : 0);
+  const y = (claimKeys.has('ArrowDown') ? 1 : 0) - (claimKeys.has('ArrowUp') ? 1 : 0);
+  const l = Math.hypot(x, y) || 1;
+  game.claim?.hold(x / l, y / l);
+}
+// 꼬마 땅따먹기: 끌어서 움직이기
 function claimActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.claim !== null; }
 // 꼬마 모드(괴물)도 같은 조작
 function joyMode() { return game.archer ?? game.horde; }
@@ -301,10 +309,7 @@ window.addEventListener('keydown', (e) => {
     else if (e.key >= '1' && e.key <= '3') game.selectCharacter(Number(e.key) - 1);
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
   else if (game.claim && overlay === 'none') {   // 땅따먹기: 방향키를 누르고 있는 동안 걸음
-    if (e.key === 'ArrowLeft') game.claim.hold(-1, 0);
-    else if (e.key === 'ArrowRight') game.claim.hold(1, 0);
-    else if (e.key === 'ArrowUp') game.claim.hold(0, -1);
-    else if (e.key === 'ArrowDown') game.claim.hold(0, 1);
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { claimKeys.add(e.key); claimKeyDir(); }
   }
   else if (game.horde && overlay === 'none') {   // 꼬마: 방향키로 이동
     const k = game.horde.keyDir;
@@ -320,7 +325,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
-  if (game.claim && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) game.claim.hold(0, 0);
+  if (game.claim && claimKeys.delete(e.key)) claimKeyDir();
   if (game.horde) {
     const k = game.horde.keyDir;
     if ((e.key === 'ArrowLeft' && k.x < 0) || (e.key === 'ArrowRight' && k.x > 0)) k.x = 0;
