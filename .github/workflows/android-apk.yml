@@ -1,4 +1,6 @@
-# 모바일 버전(mobile/)을 안드로이드 APK 로 빌드한다.
+# 모바일 버전(mobile/)을 안드로이드 앱으로 빌드한다.
+# - 테스트용 APK (debug): 폰에 바로 설치해 보는 용도
+# - 출시용 AAB (서명됨): 구글 플레이 콘솔에 올리는 용도. 깃헙 비밀값의 업로드 키로 서명
 # apk-build 브랜치에 올리면 자동으로 실행된다.
 # 공개 Releases 는 직접 올리고, 여기서는 받을 수 있게 Actions 결과물과 초안(draft) 릴리스에만 올린다.
 name: 안드로이드 APK 빌드
@@ -10,6 +12,10 @@ on:
 
 permissions:
   contents: write
+
+# 플레이에 올릴 때마다 커져야 하는 버전 번호 = 액션 실행 번호
+env:
+  VERSION_CODE: ${{ github.run_number }}
 
 jobs:
   apk:
@@ -42,21 +48,46 @@ jobs:
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/build.log"
           cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/block-breaker.apk"
 
+      # 업로드 키는 저장소에 넣지 않고 비밀값(base64)으로 받아 잠깐 파일로 풀어 쓴다
+      - name: 출시용 AAB 빌드 (서명)
+        working-directory: mobile/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error title=업로드 키 없음::저장소 비밀값 ANDROID_KEYSTORE_BASE64 가 없어서 AAB 를 서명할 수 없습니다."
+            exit 1
+          fi
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/upload.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_FILE"
+          ./gradlew bundleRelease --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          rm -f "$ANDROID_KEYSTORE_FILE"
+          cp app/build/outputs/bundle/release/app-release.aab "$GITHUB_WORKSPACE/retro-arcade-$VERSION_CODE.aab"
+
       - uses: actions/upload-artifact@v5
         with:
           name: block-breaker-apk
           path: block-breaker.apk
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: retro-arcade-aab
+          path: retro-arcade-*.aab
 
       # 초안은 공개되지 않는다. 확인한 뒤 직접 내용을 고쳐 공개하거나 지우면 된다
       - name: 초안 릴리스에 올리기
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "apk-build-${{ github.run_number }}" block-breaker.apk \
+          gh release create "apk-build-${{ github.run_number }}" block-breaker.apk retro-arcade-*.aab \
             --draft \
             --target "${{ github.sha }}" \
-            --title "APK 빌드 ${{ github.run_number }}" \
-            --notes "자동으로 빌드한 테스트용(debug) APK 입니다."
+            --title "앱 빌드 ${{ github.run_number }}" \
+            --notes "자동으로 빌드한 파일입니다. APK 는 폰에 바로 설치하는 테스트용(debug), AAB 는 구글 플레이 콘솔에 올리는 출시용(버전 번호 ${{ github.run_number }})입니다."
 
       # 실패하면 마지막 로그를 오류 표시로 남김 (커밋 화면에서 바로 확인)
       - name: 실패 로그
