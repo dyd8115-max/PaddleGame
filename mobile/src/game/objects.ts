@@ -49,8 +49,8 @@ export const Characters = {
     },
     {
       name: 'SAINT', fps: 16, mode: 'survival', speedMul: 1.5, paddleW: 80,
-      ability: '빠른 공 · 내려오는 벽돌을 몇 초 버틸까',
-      hints: ['화면 아래쪽을 좌우로 밀어 패들을 움직여요', '3초마다 벽돌이 한 줄씩 내려와요. 선에 닿으면 끝'],
+      ability: '빛의 방벽 · 내려오는 색유리를 몇 초 버틸까',
+      hints: ['화면 아래쪽을 좌우로 밀어 빛의 방벽을 움직여요', '3초마다 색유리가 한 줄씩 내려와요. 선에 닿으면 끝'],
     },
   ] as CharacterDef[],
 
@@ -168,11 +168,11 @@ export class Brick {
 export type ItemKind = 'ballX2' | 'ballX3' | 'ballHalf' | 'padLong' | 'padShort';
 export const ITEM_KINDS: ItemKind[] = ['ballX2', 'ballX3', 'ballHalf', 'padLong', 'padShort'];
 export const ITEM_INFO: Record<ItemKind, { label: string; good: boolean }> = {
-  ballX2: { label: '공×2', good: true },
-  ballX3: { label: '공×3', good: true },
-  ballHalf: { label: '공÷2', good: false },
-  padLong: { label: '패들×1.5', good: true },
-  padShort: { label: '패들÷3', good: false },
+  ballX2: { label: '빛×2', good: true },
+  ballX3: { label: '빛×3', good: true },
+  ballHalf: { label: '빛÷2', good: false },
+  padLong: { label: '방벽×1.5', good: true },
+  padShort: { label: '방벽÷3', good: false },
 };
 
 export class Item {

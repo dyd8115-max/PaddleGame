@@ -7,9 +7,12 @@ import { Vec2 } from './game/geometry';
 import { Characters, menuTop } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
-  closeApp, getInsets, leaderboardAvailable, loadValue, onAppState, onBack, onInsetsChange,
+  closeApp, getInsets, haptic, keepScreenOn, leaderboardAvailable, loadUserKey, loadValue, onAppState, onBack, onInsetsChange,
   openLeaderboard, saveValue, submitScore, type Insets,
 } from './platform';
+import { hasTutorial, openSettings, openTutorial } from './appinfo';
+import { isSheetOpen, sheetBack } from './sheet';
+import type { GameMode } from './game/objects';
 import { render } from './render';
 import { UI, type Overlay } from './ui';
 
@@ -45,11 +48,24 @@ function clearElfSave(): void {
 }
 const KEY_MUTED = 'muted';
 const KEY_CHAR = 'character';
+const KEY_VIB = 'vibration';
+const KEY_TUT = (mode: GameMode) => `tut_${mode}`;   // 규칙 안내를 봤는지
+let vibration = true;
+const tutSeen = new Set<GameMode>();
 
 async function loadSaved(): Promise<void> {
-  const [muted, ch, save, ...bests] = await Promise.all([
-    loadValue(KEY_MUTED), loadValue(KEY_CHAR), loadValue(KEY_ELF_SAVE), ...Characters.List.map((_, i) => loadValue(KEY_BEST(i))),
+  // 토스 계정이 바뀌었으면 이전 계정의 기록은 지움 (같은 기기를 다른 사람이 쓸 때)
+  const prevKey = await loadValue('userKey');
+  const userKey = await loadUserKey();
+  if (prevKey && userKey && prevKey !== userKey) await resetRecords();
+  const modes = [...new Set(Characters.List.map((c) => c.mode))];
+  const [muted, ch, save, vib, ...rest] = await Promise.all([
+    loadValue(KEY_MUTED), loadValue(KEY_CHAR), loadValue(KEY_ELF_SAVE), loadValue(KEY_VIB),
+    ...Characters.List.map((_, i) => loadValue(KEY_BEST(i))), ...modes.map((m) => loadValue(KEY_TUT(m))),
   ]);
+  const bests = rest.slice(0, Characters.List.length);
+  modes.forEach((m, i) => { if (rest[Characters.List.length + i] === '1') tutSeen.add(m); });
+  vibration = vib !== '0';
   elfSave = readElfSave(save);
   bests.forEach((v, i) => game.setBestRecord(i, Number(v) || 0));
   audio.setMuted(muted === '1');
@@ -88,7 +104,17 @@ const ly = (e: { clientY: number }) => e.clientY - rect.top;
 // ---------- 동작 ----------
 // 엘프(스와이프)는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
 function start(fresh = false): void {
-  if (game.state !== 'menu') return;
+  if (game.state !== 'menu' || isSheetOpen()) return;
+  // 처음 하는 캐릭터면 규칙 안내부터
+  const mode = Characters.List[game.selected].mode;
+  if (hasTutorial(mode) && !tutSeen.has(mode)) {
+    openTutorial(mode, () => {
+      tutSeen.add(mode);
+      void saveValue(KEY_TUT(mode), '1');
+      start(fresh);
+    });
+    return;
+  }
   const isElf = Characters.List[game.selected].mode === 'swipe';
   if (isElf && fresh) clearElfSave();
   resize();   // 캐릭터에 따라 아래 조작 공간 높이가 달라서, 시작 전에 화면 배치를 다시 계산
@@ -108,6 +134,28 @@ function pause(): void {
   game.climb?.release();
 }
 
+// 기록 초기화: 캐릭터별 최고 기록과 엘프 이어하기 저장
+async function resetRecords(): Promise<void> {
+  game.resetBestRecords();
+  elfSave = null;
+  await Promise.all([...Characters.List.map((_, i) => saveValue(KEY_BEST(i), '0')), saveValue(KEY_ELF_SAVE, '')]);
+}
+
+function showSettings(): void {
+  openSettings({
+    muted: () => audio.muted,
+    toggleSound: toggleMute,
+    vibration: () => vibration,
+    toggleVibration: () => {
+      vibration = !vibration;
+      void saveValue(KEY_VIB, vibration ? '1' : '0');
+      if (vibration) haptic('tap');
+    },
+    howTo: (mode) => openTutorial(mode, showSettings, '확인'),
+    resetRecords: () => { void resetRecords(); },
+  });
+}
+
 function toggleMute(): void {
   audio.setMuted(!audio.muted);
   void saveValue(KEY_MUTED, audio.muted ? '1' : '0');
@@ -125,6 +173,17 @@ function quit(): void {
   game.quitToMenu();
   finishGame();
 }
+
+// 진동: 너무 자주 울리지 않게 굵직한 순간에만
+const HAPTIC_OF: Partial<Record<GameEvent, 'tickWeak' | 'basicMedium' | 'success' | 'error'>> = {
+  brickBreak: 'tickWeak',
+  hurt: 'basicMedium',
+  devilStomp: 'basicMedium',
+  stageClear: 'success',
+  levelUp: 'success',
+  gameOver: 'error',
+};
+let lastHaptic = -1;
 
 const SOUND_OF: Record<GameEvent, SoundName> = {
   start: 'start',
@@ -199,6 +258,8 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   flagTap = false;
+  // 메뉴: 오른쪽 위 톱니바퀴 = 설정
+  if (game.state === 'menu' && overlay === 'none' && layout.soundBtn.contains(lx(e), ly(e))) { showSettings(); return; }
   if (claimActive()) {
     if (hudSoundRect().contains(lx(e), ly(e))) { toggleMute(); return; }
     game.claim!.joyBegin(lx(e), ly(e));
@@ -262,6 +323,7 @@ function onTap(x: number, y: number): void {
   if (overlay === 'pause') {
     if (UI.resume.contains(w.x, w.y)) overlay = 'none';
     else if (UI.quit.contains(w.x, w.y)) quit();
+    else if (UI.howTo.contains(w.x, w.y)) openTutorial(game.mode, () => undefined, '확인');
     return;
   }
   if (overlay === 'exit') {
@@ -299,6 +361,7 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 // 키보드 (PC 브라우저에서 확인할 때)
 window.addEventListener('keydown', (e) => {
   audio.unlock();
+  if (isSheetOpen()) { if (e.key === 'Escape') sheetBack(); return; }
   if (e.key === 'm' || e.key === 'M') toggleMute();
   else if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
     if (overlay === 'pause') overlay = 'none'; else pause();
@@ -349,6 +412,7 @@ onAppState((active) => {
 
 // 안드로이드 뒤로가기: 플레이 중 → 일시정지, 창이 떠 있으면 닫기, 메뉴 → 종료 확인
 onBack(() => {
+  if (sheetBack()) return;   // 떠 있는 창부터 닫음
   if (overlay !== 'none') overlay = 'none';
   else if (game.state === 'playing') pause();
   else overlay = 'exit';
@@ -371,6 +435,10 @@ function frame(now: number): void {
     if (name === 'brick' && clock - lastBrickSound < 0.04) continue;
     if (name === 'brick') lastBrickSound = clock;
     audio.play(name);
+    if (vibration) {
+      const h = HAPTIC_OF[e];
+      if (h && (h !== 'tickWeak' || clock - lastHaptic > 0.08)) { haptic(h); lastHaptic = clock; }
+    }
     if (e === 'gameOver') {
       if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움 (엘프)
       finishGame();
@@ -384,6 +452,8 @@ function frame(now: number): void {
     elfSave = sw.save();
     void saveValue(KEY_ELF_SAVE, JSON.stringify(elfSave));
   }
+
+  keepScreenOn(game.state === 'playing' && overlay === 'none');   // 게임 중엔 화면이 꺼지지 않게
 
   render(ctx, layout, game, {
     overlay,

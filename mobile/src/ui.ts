@@ -7,6 +7,7 @@ export const UI = {
   newGame: new Rect(150, 520, 180, 34),   // 엘프 중간 저장이 있을 때만: 처음부터 새로 하기
   resume: new Rect(130, 300, 220, 56),
   quit: new Rect(130, 372, 220, 56),
+  howTo: new Rect(130, 444, 220, 50),   // 일시정지: 게임 방법
   exitCancel: new Rect(90, 350, 140, 52),
   exitOk: new Rect(250, 350, 140, 52),
 };

@@ -2,7 +2,10 @@
 // - 토스 앱: 앱인토스 SDK
 // - 안드로이드 앱(Capacitor): 뒤로가기, 앱 전환, 종료
 // - 일반 브라우저: 브라우저 기능으로 대신
-import { Game, SafeArea, Screen, Storage, getOperationalEnvironment, graniteEvent } from '@apps-in-toss/web-framework';
+import {
+  Game, SafeArea, Screen, Storage, generateHapticFeedback, getAnonymousKey, getOperationalEnvironment, graniteEvent,
+  setScreenAwakeMode, type HapticFeedbackType,
+} from '@apps-in-toss/web-framework';
 import { Capacitor } from '@capacitor/core';
 
 export interface Insets { top: number; bottom: number; left: number; right: number; }
@@ -120,4 +123,38 @@ export async function openLeaderboard(): Promise<void> {
   try {
     if (Game.openLeaderboard.isSupported()) await Game.openLeaderboard();
   } catch { /* 무시 */ }
+}
+
+// ---------- 진동 ----------
+// 토스 앱은 SDK 햅틱, 그 밖(안드로이드 앱, 브라우저)은 짧은 진동으로 대신
+const VIBRATE_MS: Partial<Record<HapticFeedbackType, number>> = { tickWeak: 8, tap: 12, basicMedium: 25, success: 30, error: 60 };
+export function haptic(type: HapticFeedbackType): void {
+  if (inToss) {
+    try { void generateHapticFeedback({ type }).catch(() => undefined); } catch { /* 무시 */ }
+    return;
+  }
+  try { navigator.vibrate?.(VIBRATE_MS[type] ?? 15); } catch { /* 무시 */ }
+}
+
+// ---------- 화면 꺼짐 방지 (게임 중에만) ----------
+let awake = false;
+export function keepScreenOn(on: boolean): void {
+  if (!inToss || awake === on) return;
+  awake = on;
+  try { void setScreenAwakeMode({ enabled: on }).catch(() => undefined); } catch { /* 무시 */ }
+}
+
+// ---------- 사용자 식별키 ----------
+// 토스가 게임마다 주는 익명 키 (개인정보 아님). 기록을 이 사용자 것으로 묶을 때 쓰려고 받아서 저장해 둔다
+export async function loadUserKey(): Promise<string | null> {
+  if (!inToss) return null;
+  try {
+    if (!getAnonymousKey.isSupported()) return null;
+    const r = await withTimeout(getAnonymousKey(), 3000);
+    if (r && typeof r === 'object' && r.type === 'HASH') {
+      await saveValue('userKey', r.hash);
+      return r.hash;
+    }
+  } catch { /* 못 받아도 게임은 그대로 */ }
+  return loadValue('userKey');
 }

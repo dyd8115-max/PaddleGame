@@ -192,6 +192,7 @@ export class Game {
 
   // ---------- 입력 ----------
   setBestRecord(ch: number, v: number): void { this.best_[ch] = Math.max(this.best_[ch], v); }
+  resetBestRecords(): void { this.best_ = this.best_.map(() => 0); this.lastRecord_ = 0; this.lastResult_ = 'none' as GameResult; }
 
   setPaddleTarget(x: number): void { this.paddle.targetX = x; }
 

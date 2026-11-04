@@ -14,12 +14,7 @@ import { UI, type Overlay } from './ui';
 
 const FONT = '"Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
 
-const ROW_COLORS = ['#e65050', '#f0963c', '#50c878', '#50a0f0', '#aa6ee6'];
 const ITEM_COLOR = '#ffe65a';
-const PADDLE_COLOR = '#dcdce6';
-const BALL_COLOR: Record<string, string> = { white: '#ffffff', red: '#ff4d4d', green: '#4ddc7a' };
-const ITEM_GOOD = '#3b82f6';        // 좋은 아이템 (공 늘리기, 패들 길게)
-const ITEM_BAD = '#b23b3b';         // 나쁜 아이템 (공 줄이기, 패들 짧게)
 const WALL_COLOR = '#7c8190';       // 회색 벽 (안 깨짐)
 const WALL_LIGHT = '#a9aebb';
 const WALL_DARK = '#3c404c';
@@ -128,14 +123,6 @@ function drawDevilSprite(ctx: Ctx, d: Devil, dip: number): void {
     ctx.drawImage(img, d.frame() * c, d.anim() * c, c, c, b.x, b.y + dip, dc, dc);
   }
   ctx.restore();
-}
-
-// 밝은 배경에서도 보이도록 어두운 테두리를 두른 사각형
-function outlinedRect(ctx: Ctx, r: Rect, color: string): void {
-  ctx.fillStyle = '#0f0f19';
-  ctx.fillRect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3);
-  ctx.fillStyle = color;
-  ctx.fillRect(r.x, r.y, r.w, r.h);
 }
 
 function button(ctx: Ctx, r: Rect, label: string, primary: boolean, size = 20): void {
@@ -451,7 +438,7 @@ function drawClaim(ctx: Ctx, game: Game, v: View): void {
   if (c.clearTimer > 0) {
     text(ctx, 'STAGE CLEAR!', World.Width / 2, my, 32, ITEM_COLOR, { bold: true });
     text(ctx, '다음 스테이지는 악마가 하나 더', World.Width / 2, my + 40, 16, '#2a2a3a', { bold: true });
-  } else if (c.stage === 1 && c.stageTime < 5) {
+  } else if (c.stage === 1 && c.stageTime < 5 && v.overlay === 'none') {
     ctx.fillStyle = 'rgba(10,12,24,0.6)';
     ctx.fillRect(20, my - 26, World.Width - 40, 100);
     text(ctx, '끌어서 걷고, 선으로 둘러싸 땅을 차지!', World.Width / 2, my, 19, WHITE, { bold: true });
@@ -1143,23 +1130,22 @@ function drawPlaying(ctx: Ctx, game: Game, v: View): void {
     const c1 = 1.70158, c3 = c1 + 1, u = r - 1;
     const s = 1 + c3 * u * u * u + c1 * u * u;
     const b = new Rect(k.rect.x, k.rect.y + shift, k.rect.w, k.rect.h);
-    const color = k.item ? ITEM_COLOR : ROW_COLORS[k.row % ROW_COLORS.length];
-    ctx.fillStyle = mix(color, (1 - r) * 0.7);
-    ctx.fillRect(b.centerX - b.w * s / 2, b.centerY - b.h * s / 2, b.w * s, b.h * s);
+    const rr = new Rect(b.centerX - b.w * s / 2, b.centerY - b.h * s / 2, b.w * s, b.h * s);
+    drawGlassBrick(ctx, rr, k.item ? 'gold' : GLASS_COLORS[k.row % GLASS_COLORS.length], k.item, (1 - r) * 0.7, k.row * 7 + Math.round(k.rect.x));
   }
 
   drawItems(ctx, game);
 
   const pad = game.paddle.bounds();
   pad.y += game.stompDip();
-  outlinedRect(ctx, pad, PADDLE_COLOR);
-  for (const b of game.balls) outlinedRect(ctx, b.bounds(), BALL_COLOR[b.kind]);
+  drawHolyBarrier(ctx, pad, v.time);
+  for (const b of game.balls) drawLightOrb(ctx, b.bounds(), b.kind, v.time);
   drawDevil(ctx, game);   // 공과 패들보다 나중에 그려서 공을 가림
 
   const my = World.Height * 0.5;   // 안내 문구는 세계 높이의 가운데쯤
   if (game.serving && game.mode === 'survival') {
     text(ctx, '준비!', World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
-    text(ctx, '3초마다 벽돌이 한 줄씩 내려와요', World.Width / 2, my + 50, 16, '#dcdce6');
+    text(ctx, '3초마다 색유리가 한 줄씩 내려와요', World.Width / 2, my + 50, 16, '#dcdce6');
   } else if (game.serving && game.mode === 'mine') {
     text(ctx, `STAGE ${game.stage}`, World.Width / 2, my, 34, ITEM_COLOR, { bold: true });
     text(ctx, game.stage === 1 ? '지뢰 같은 벽돌은 톡 쳐서 깃발!' : `지뢰가 늘어요 · 남은 체력 ${game.hearts}`, World.Width / 2, my + 50, 16, '#dcdce6');
@@ -1177,14 +1163,101 @@ function drawItems(ctx: Ctx, game: Game): void {
   for (const it of game.items) {
     const r = it.bounds();
     const info = ITEM_INFO[it.kind];
-    roundRect(ctx, new Rect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3), (r.h + 3) / 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    // 축복(좋은 것)은 금빛 두루마리, 저주(나쁜 것)는 보랏빛 두루마리
+    roundRect(ctx, new Rect(r.x - 2, r.y - 2, r.w + 4, r.h + 4), 6);
+    ctx.fillStyle = info.good ? 'rgba(255,220,120,0.45)' : 'rgba(150,60,200,0.45)';
     ctx.fill();
-    roundRect(ctx, r, r.h / 2);
-    ctx.fillStyle = info.good ? ITEM_GOOD : ITEM_BAD;
+    roundRect(ctx, r, 5);
+    const g = ctx.createLinearGradient(0, r.y, 0, r.bottom);
+    g.addColorStop(0, info.good ? '#fff4d0' : '#5a2a78');
+    g.addColorStop(1, info.good ? '#e8c46a' : '#2e1240');
+    ctx.fillStyle = g;
     ctx.fill();
-    text(ctx, info.label, r.centerX, r.centerY + 1, 13, WHITE, { bold: true });
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = info.good ? '#a87a20' : '#c890ff';
+    ctx.stroke();
+    text(ctx, info.label, r.centerX, r.centerY + 1, 13, info.good ? '#5a3a00' : '#f0dcff', { bold: true });
   }
+}
+
+// ---------- 성녀 모드 그림 ----------
+// 스테인드글라스 색 (줄마다)
+const GLASS_COLORS = ['#d23c5a', '#3a6ee0', '#2fae7a', '#9a4fd8', '#e08a2a'];
+
+// 벽돌: 납 테두리 안에 색유리 조각, 위쪽에 빛 반사. 노란(아이템) 벽돌은 금빛 유리에 십자 별
+function drawGlassBrick(ctx: Ctx, r: Rect, color: string, item: boolean, fade: number, seed: number): void {
+  const base = item ? '#f2c94c' : color;
+  ctx.fillStyle = '#231a2e';                               // 납 테두리
+  ctx.fillRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
+  const g = ctx.createLinearGradient(r.x, r.y, r.right, r.bottom);
+  g.addColorStop(0, shade(base, 0.25));
+  g.addColorStop(1, shade(base, -0.25));
+  ctx.fillStyle = g;
+  ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+  if (fade > 0) { ctx.fillStyle = `rgba(255,255,255,${fade})`; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }   // 나타나는 중엔 하얗게
+  // 유리 조각 나누는 납 줄 (벽돌마다 조금 다르게)
+  ctx.strokeStyle = 'rgba(35,26,46,0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const k = (seed % 3) / 3;
+  ctx.moveTo(r.x + r.w * (0.25 + k * 0.2), r.y + 1);
+  ctx.lineTo(r.x + r.w * (0.45 + k * 0.1), r.bottom - 1);
+  ctx.moveTo(r.x + r.w * (0.65 + k * 0.1), r.y + 1);
+  ctx.lineTo(r.x + r.w * (0.8 - k * 0.1), r.bottom - 1);
+  ctx.stroke();
+  // 빛 반사
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillRect(r.x + 2, r.y + 2, r.w - 4, 3);
+  if (item) {   // 십자 별
+    const cx = r.centerX, cy = r.centerY;
+    ctx.fillStyle = '#fffbe8';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 7); ctx.lineTo(cx + 2, cy - 2); ctx.lineTo(cx + 7, cy); ctx.lineTo(cx + 2, cy + 2);
+    ctx.lineTo(cx, cy + 7); ctx.lineTo(cx - 2, cy + 2); ctx.lineTo(cx - 7, cy); ctx.lineTo(cx - 2, cy - 2); ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// 공: 빛 구슬. 하양은 금빛, 빠른 빨강은 장밋빛 불꽃, 느린 초록은 박하빛
+const ORB_COLORS: Record<string, [string, string]> = { white: ['#fffbe6', '#ffd75a'], red: ['#ffe4e8', '#ff5a7a'], green: ['#eafff4', '#5ae0a0'] };
+function drawLightOrb(ctx: Ctx, r: Rect, kind: string, t: number): void {
+  const [inner, outer] = ORB_COLORS[kind] ?? ORB_COLORS.white;
+  const cx = r.centerX, cy = r.centerY, R = r.w * 0.6;
+  const glowR = R * (2.4 + 0.2 * Math.sin(t * 9 + cx));
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+  g.addColorStop(0, outer + 'aa');
+  g.addColorStop(1, outer + '00');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, glowR, 0, Math.PI * 2); ctx.fill();
+  const c = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.3, 0, cx, cy, R);
+  c.addColorStop(0, '#ffffff');
+  c.addColorStop(0.5, inner);
+  c.addColorStop(1, outer);
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+}
+
+// 패들: 빛의 방벽. 금빛 막대 위로 은은한 빛, 가운데 십자
+function drawHolyBarrier(ctx: Ctx, r: Rect, t: number): void {
+  const glow = ctx.createLinearGradient(0, r.y - 16, 0, r.y);
+  glow.addColorStop(0, 'rgba(255,230,140,0)');
+  glow.addColorStop(1, `rgba(255,230,140,${0.35 + 0.1 * Math.sin(t * 3)})`);
+  ctx.fillStyle = glow;
+  ctx.fillRect(r.x + 4, r.y - 16, r.w - 8, 16);
+  roundRect(ctx, new Rect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3), (r.h + 3) / 2);
+  ctx.fillStyle = '#5a3a10';
+  ctx.fill();
+  roundRect(ctx, r, r.h / 2);
+  const g = ctx.createLinearGradient(0, r.y, 0, r.bottom);
+  g.addColorStop(0, '#fff6cf');
+  g.addColorStop(0.5, '#f2c94c');
+  g.addColorStop(1, '#b8892a');
+  ctx.fillStyle = g;
+  ctx.fill();
+  const cx = r.centerX, cy = r.centerY;
+  ctx.fillStyle = '#fffbe8';
+  ctx.fillRect(cx - 1.5, cy - r.h * 0.35, 3, r.h * 0.7);
+  ctx.fillRect(cx - 5, cy - 1.5, 10, 3);
 }
 
 // 회색 벽: 테두리와 위쪽 밝은 줄로 돌처럼. 스테이지 시작 때 짧게 나타난다
@@ -1269,6 +1342,7 @@ function drawOverlay(ctx: Ctx, overlay: Overlay): void {
     text(ctx, '일시정지', World.Width / 2, 230, 30, WHITE, { bold: true });
     button(ctx, UI.resume, '계속하기', true, 22);
     button(ctx, UI.quit, '그만하기', false, 20);
+    button(ctx, UI.howTo, '게임 방법', false, 17);
   } else {
     text(ctx, '게임을 종료할까요?', World.Width / 2, 280, 24, WHITE, { bold: true });
     button(ctx, UI.exitCancel, '취소', false, 20);
@@ -1295,6 +1369,24 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     ctx.fillStyle = WHITE;
     ctx.fillRect(r.centerX - 7, r.centerY - 8, 5, 16);
     ctx.fillRect(r.centerX + 2, r.centerY - 8, 5, 16);
+  }
+
+  // 메뉴: 설정 버튼 (톱니바퀴)
+  if (!playing) {
+    const g = l.soundBtn;
+    iconBtn(g);
+    const gx = g.centerX, gy = g.centerY;
+    ctx.fillStyle = WHITE;
+    for (let k = 0; k < 8; k++) {
+      ctx.save();
+      ctx.translate(gx, gy);
+      ctx.rotate((k * Math.PI) / 4);
+      ctx.fillRect(-2.5, -11, 5, 6);
+      ctx.restore();
+    }
+    ctx.beginPath(); ctx.arc(gx, gy, 7.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(20,22,34,1)';
+    ctx.beginPath(); ctx.arc(gx, gy, 3.2, 0, Math.PI * 2); ctx.fill();
   }
 
   // 소리 버튼: 스피커 모양, 꺼져 있으면 X
@@ -1392,7 +1484,7 @@ export function render(ctx: Ctx, l: Layout, game: Game, v: View): void {
       : game.horde ? '화면 어디든 끌어서 이동'
       : game.climb ? '화면 어디든 누르면 점프 · 길게 누르면 높이'
       : game.archer ? '화면 어디든 끌어서 이동, 멈추면 자동 발사'
-      : game.swipe ? '◀   풀밭 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 패들 이동   ▶';
+      : game.swipe ? '◀   풀밭 아래를 밀어 쏠 자리 옮기기   ▶' : '◀   여기를 좌우로 밀어 빛의 방벽 이동   ▶';
     text(ctx, hint, l.w / 2, y, 14, WHITE);
     ctx.globalAlpha = 1;
   }
