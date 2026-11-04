@@ -23,6 +23,7 @@ export const isInToss = (): boolean => inToss;
 // 안드로이드 앱으로 감싸서 실행 중인지
 let native = false;
 try { native = Capacitor.isNativePlatform(); } catch { native = false; }
+export const isNative = (): boolean => native;
 const capApp = () => import('@capacitor/app').then((m) => m.App);
 
 // 너무 오래 걸리는 SDK 호출은 실패로 본다

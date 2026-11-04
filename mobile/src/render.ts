@@ -1,8 +1,8 @@
 // 캔버스 그리기. 게임 상태를 읽기만 한다
-import { images } from './assets';
+import { characterCell, images } from './assets';
 import type { Game } from './game/game';
 import { Rect } from './game/geometry';
-import { Characters, Devil, DevilSprite, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
+import { Characters, Devil, DevilSprite, Games, ITEM_INFO, World, menuTop, type GameMode } from './game/objects';
 import { SKILLS, type SkillId } from './game/archer';
 import { KID_DRAW_H, KID_DRAW_W, SHOT_R, TILE_HP, hordeSkill, type Monster } from './game/horde';
 import { CELL, KID_H, KID_W, LAVA_DELAY, PIECE_COLORS } from './game/climb';
@@ -27,8 +27,12 @@ export interface View {
   overlay: Overlay;
   muted: boolean;
   rankingVisible: boolean;
-  elfSaveRound: number;  // 엘프 중간 저장 라운드 (없으면 0)
+  elfSaveRound: number;  // 룬 돌 깨기 중간 저장 라운드 (없으면 0)
   time: number;          // 화면 연출용 시계 (초)
+  coins: number;         // 가진 코인
+  owned: (i: number) => boolean;   // 해금한 캐릭터인지
+  adOffer: number;       // 판이 끝난 뒤 광고로 더 받을 수 있는 코인 (0 이면 버튼 없음)
+  adReady: boolean;      // 광고를 바로 보여 줄 수 있는지
 }
 
 type Ctx = CanvasRenderingContext2D;
@@ -77,22 +81,20 @@ function drawBackground(ctx: Ctx, l: Layout, index: number): void {
 }
 
 function drawCharacter(ctx: Ctx, character: number, frame: number, facingLeft: boolean, dst: Rect): void {
-  const img = images.characters;
-  if (!img) {
+  const cell = characterCell(character, frame);
+  if (!cell) {
     ctx.fillStyle = '#78a06e';
-    ctx.fillRect(dst.x, dst.y, dst.w, dst.h);
+    ctx.fillRect(dst.x + dst.w * 0.3, dst.y + dst.h * 0.3, dst.w * 0.4, dst.h * 0.7);
     return;
   }
-  const cw = img.width / Characters.FrameCount;
-  const ch = img.height / Characters.List.length;
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   if (facingLeft) {
     ctx.translate(dst.x + dst.w, dst.y);
     ctx.scale(-1, 1);
-    ctx.drawImage(img, frame * cw, character * ch, cw, ch, 0, 0, dst.w, dst.h);
+    ctx.drawImage(cell.img, cell.sx, cell.sy, cell.sw, cell.sh, 0, 0, dst.w, dst.h);
   } else {
-    ctx.drawImage(img, frame * cw, character * ch, cw, ch, dst.x, dst.y, dst.w, dst.h);
+    ctx.drawImage(cell.img, cell.sx, cell.sy, cell.sw, cell.sh, dst.x, dst.y, dst.w, dst.h);
   }
   ctx.restore();
 }
@@ -1278,18 +1280,69 @@ function drawWalls(ctx: Ctx, game: Game): void {
   ctx.restore();
 }
 
+// 코인 그림 (금화)
+function drawCoin(ctx: Ctx, x: number, y: number, r: number): void {
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+  g.addColorStop(0, '#fff3a8');
+  g.addColorStop(0.45, '#ffcf3a');
+  g.addColorStop(1, '#d99a10');
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.2, r * 0.18);
+  ctx.strokeStyle = '#b97a00';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1, r * 0.12);
+  ctx.strokeStyle = 'rgba(185,122,0,0.7)';
+  ctx.stroke();
+}
+
+// 자물쇠 그림
+function drawLock(ctx: Ctx, x: number, y: number, s: number): void {
+  ctx.fillStyle = 'rgba(10,12,20,0.75)';
+  ctx.beginPath();
+  ctx.arc(x, y, s * 1.15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = WHITE;
+  ctx.lineWidth = s * 0.22;
+  ctx.beginPath();
+  ctx.arc(x, y - s * 0.2, s * 0.38, Math.PI, 0);
+  ctx.stroke();
+  ctx.fillStyle = WHITE;
+  roundRect(ctx, new Rect(x - s * 0.55, y - s * 0.2, s * 1.1, s * 0.8), s * 0.15);
+  ctx.fill();
+}
+
 function drawMenu(ctx: Ctx, game: Game, v: View): void {
   ctx.fillStyle = 'rgba(10,12,20,0.45)';
   ctx.fillRect(0, 0, World.Width, World.Height);
   ctx.save();
   ctx.translate(0, menuTop());   // 메뉴 내용은 640 높이 상자로 가운데에
 
-  text(ctx, '레트로 오락실', World.Width / 2, 60, 38, WHITE, { bold: true });
-  text(ctx, '캐릭터를 고르세요', World.Width / 2, 112, 16, GRAY);
+  text(ctx, '레트로 오락실', World.Width / 2, 40, 34, WHITE, { bold: true });
 
+  // 코인 (누르면 상점)
+  const cr = UI.coin;
+  roundRect(ctx, cr, cr.h / 2);
+  ctx.fillStyle = 'rgba(20,22,34,0.85)';
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(255,216,77,0.55)';
+  ctx.stroke();
+  drawCoin(ctx, cr.x + 20, cr.centerY, 10);
+  text(ctx, v.coins.toLocaleString('ko-KR'), cr.centerX + 4, cr.centerY + 1, 18, ITEM_COLOR, { bold: true });
+  text(ctx, '+', cr.right - 18, cr.centerY, 20, WHITE, { bold: true });
+
+  // 캐릭터
+  text(ctx, '캐릭터', 22, 124, 13, GRAY, { bold: true, align: 'left' });
   for (let i = 0; i < Characters.List.length; i++) {
-    const card = Characters.cardRect(i);
-    const sel = i === game.selected;
+    const card = UI.charCard(i);
+    const c = Characters.List[i];
+    const sel = i === game.selectedChar;
+    const own = v.owned(i);
     roundRect(ctx, card, 12);
     ctx.fillStyle = sel ? CARD_SEL : CARD;
     ctx.fill();
@@ -1298,37 +1351,86 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
       ctx.strokeStyle = ITEM_COLOR;
       ctx.stroke();
     }
-    const sw = Characters.CellW * 1.4, sh = Characters.CellH * 1.4;
-    const dst = new Rect(card.centerX - sw / 2, card.bottom - 30 - sh, sw, sh);
-    const frame = sel ? Math.floor(game.menuTime * Characters.List[i].fps) % Characters.FrameCount : 0;
+    const sw = Characters.CellW * 1.2, sh = Characters.CellH * 1.2;
+    const dst = new Rect(card.centerX - sw / 2, card.bottom - 26 - sh, sw, sh);
+    const frame = sel ? Math.floor(game.menuTime * c.fps) % c.frames : 0;
+    if (!own) ctx.globalAlpha = 0.35;
     drawCharacter(ctx, i, frame, false, dst);
-    text(ctx, Characters.List[i].name, card.centerX, card.bottom - 16, 15, sel ? ITEM_COLOR : WHITE, { bold: true });
+    ctx.globalAlpha = 1;
+    if (own) {
+      text(ctx, c.name, card.centerX, card.bottom - 14, 15, sel ? ITEM_COLOR : WHITE, { bold: true });
+    } else {
+      drawLock(ctx, card.centerX, card.y + 50, 12);
+      const label = c.price.toLocaleString('ko-KR');
+      ctx.font = font(14, true);
+      const tw = ctx.measureText(label).width;
+      drawCoin(ctx, card.centerX - tw / 2 - 4, card.bottom - 14, 7);
+      text(ctx, label, card.centerX + 6, card.bottom - 14, 14, ITEM_COLOR, { bold: true });
+    }
   }
 
-  // 고른 캐릭터의 능력
-  text(ctx, Characters.List[game.selected].ability, World.Width / 2, 322, 16, ITEM_COLOR, { bold: true });
-
-  if (game.lastResult === 'gameover') {
-    const lastMode = Characters.List[game.player.character].mode;
-    text(ctx, `게임 오버  ·  ${Characters.List[game.player.character].name}  ${formatRecord(lastMode, game.lastRecord)}`,
-      World.Width / 2, 350, 17, '#f06e6e', { bold: true });
+  // 게임
+  text(ctx, '게임', 22, 286, 13, GRAY, { bold: true, align: 'left' });
+  for (let i = 0; i < Games.List.length; i++) {
+    const r = UI.gameTab(i);
+    const sel = i === game.selectedGame;
+    roundRect(ctx, r, 12);
+    ctx.fillStyle = sel ? ITEM_COLOR : CARD;
+    ctx.fill();
+    if (!sel) {
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.stroke();
+    }
+    text(ctx, Games.List[i].name, r.centerX, r.centerY + 1, 17, sel ? '#1e2232' : WHITE, { bold: true });
   }
-  const selMode = Characters.List[game.selected].mode;
-  const selBest = game.bestRecord(game.selected);
-  text(ctx, selBest > 0 ? `최고 기록 ${formatRecord(selMode, selBest)}` : '아직 기록이 없어요', World.Width / 2, 376, 15, GRAY);
+  const g = Games.List[game.selectedGame];
+  text(ctx, g.ability, World.Width / 2, 360, 15, ITEM_COLOR, { bold: true });
+
+  // 방금 끝난 판, 아니면 최고 기록
+  if (game.lastResult === 'gameover' && game.playingGame === game.selectedGame) {
+    const lm = Games.List[game.playingGame].mode;
+    const coins = game.lastCoins > 0 ? `  ·  +${game.lastCoins} 코인` : '';
+    text(ctx, `게임 오버  ·  ${formatRecord(lm, game.lastRecord)}${coins}`, World.Width / 2, 385, 16, '#f06e6e', { bold: true });
+  } else {
+    const best = game.bestRecord(game.selectedGame);
+    text(ctx, best > 0 ? `최고 기록 ${formatRecord(g.mode, best)}` : '아직 기록이 없어요', World.Width / 2, 385, 15, GRAY);
+  }
 
   // 시작 버튼은 살짝 숨쉬듯 커졌다 작아짐
   const pulse = 1 + 0.03 * Math.sin(v.time * 4);
   const s = UI.start;
   const big = new Rect(s.centerX - s.w * pulse / 2, s.centerY - s.h * pulse / 2, s.w * pulse, s.h * pulse);
-  const resume = selMode === 'swipe' && v.elfSaveRound > 0;
+  const resume = g.mode === 'swipe' && v.elfSaveRound > 0;
   button(ctx, big, resume ? `이어하기 (R${v.elfSaveRound})` : '시작하기', true, resume ? 20 : 24);
-  if (resume) button(ctx, UI.newGame, '처음부터', false, 15);
-  if (v.rankingVisible) button(ctx, UI.ranking, '랭킹 보기', false, 17);
 
-  const hints = Characters.List[game.selected].hints;
-  text(ctx, hints[0], World.Width / 2, 566, 15, GRAY);
-  text(ctx, hints[1], World.Width / 2, 592, 15, GRAY);
+  // 판이 끝난 뒤: 광고 보고 코인 한 번 더
+  if (v.adOffer > 0) {
+    const r = UI.adBonus;
+    roundRect(ctx, r, 14);
+    ctx.fillStyle = v.adReady ? '#2fae7a' : 'rgba(36,40,56,0.92)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = v.adReady ? '#7dffb0' : 'rgba(255,255,255,0.2)';
+    ctx.stroke();
+    if (v.adReady) {
+      // 재생 표시 ▶
+      ctx.fillStyle = WHITE;
+      ctx.beginPath();
+      ctx.moveTo(r.x + 22, r.centerY - 8);
+      ctx.lineTo(r.x + 36, r.centerY);
+      ctx.lineTo(r.x + 22, r.centerY + 8);
+      ctx.closePath();
+      ctx.fill();
+      text(ctx, `광고 보고 +${v.adOffer} 코인 더 받기`, r.centerX + 12, r.centerY + 1, 17, WHITE, { bold: true });
+    } else {
+      text(ctx, '광고 불러오는 중…', r.centerX, r.centerY + 1, 15, GRAY, { bold: true });
+    }
+  }
+  if (resume) button(ctx, UI.newGame(v.adOffer > 0), '처음부터', false, 15);
+
+  button(ctx, UI.shop(v.rankingVisible), '상점', false, 17);
+  if (v.rankingVisible) button(ctx, UI.ranking, '랭킹 보기', false, 17);
   ctx.restore();
 }
 
@@ -1423,7 +1525,7 @@ function drawHud(ctx: Ctx, l: Layout, game: Game, v: View): void {
     const maxW = l.w - l.insets.right - TOSS_BUTTONS_W - x;
     const y = l.hudTop + HUD_H / 2;
     const mode = game.mode;
-    const best = game.bestRecord(game.player.character);
+    const best = game.bestRecord(game.playingGame);
     const sw = game.swipe;
     const ar = game.archer;
     const sub = game.claim ? `${Math.floor(game.claim.percent * 100)}%/${GOAL * 100}% · ${'♥'.repeat(Math.max(0, game.claim.lives))} · 처치 ${game.claim.kills}`

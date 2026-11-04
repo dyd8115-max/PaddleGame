@@ -17,8 +17,10 @@
   },
   "dependencies": {
     "@apps-in-toss/web-framework": "3.8.0",
+    "@capacitor-community/admob": "8.2.1",
     "@capacitor/android": "8.5.2",
     "@capacitor/app": "8.1.1",
-    "@capacitor/core": "8.5.2"
+    "@capacitor/core": "8.5.2",
+    "@capgo/native-purchases": "8.9.6"
   }
 }

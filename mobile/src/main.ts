@@ -4,7 +4,7 @@ import { loadImages } from './assets';
 import { Game, type GameEvent } from './game/game';
 import type { SwipeSave } from './game/swipe';
 import { Vec2 } from './game/geometry';
-import { Characters, menuTop } from './game/objects';
+import { Characters, Games, menuTop } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
   closeApp, getInsets, haptic, keepScreenOn, leaderboardAvailable, loadUserKey, loadValue, onAppState, onBack, onInsetsChange,
@@ -14,6 +14,10 @@ import { hasTutorial, openSettings, openTutorial } from './appinfo';
 import { isSheetOpen, sheetBack } from './sheet';
 import type { GameMode } from './game/objects';
 import { render } from './render';
+import { initAds, rewardedReady, rewardedSupported, showRewarded } from './ads';
+import { wallet } from './economy';
+import { initIap } from './iap';
+import { openShop, openUnlock, type ShopHooks } from './shop';
 import { UI, type Overlay } from './ui';
 
 const canvas = document.getElementById('screen') as HTMLCanvasElement;
@@ -28,8 +32,8 @@ let overlay: Overlay = 'none';
 let clock = 0;
 
 // ---------- 저장 ----------
-// 캐릭터별 최고 기록 (게임 방식이 바뀌면 키도 바꿔서 단위가 다른 옛 기록과 섞이지 않게)
-const KEY_BEST = (ch: number) => ['best0s', 'best1r', 'best2'][ch];
+// 게임별 최고 기록 (예전 캐릭터 번호와 같은 키: 0 땅따먹기, 1 룬 돌 깨기, 2 빛의 방벽)
+const KEY_BEST = (gi: number) => ['best0s', 'best1r', 'best2'][gi];
 const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(엘프) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
@@ -47,7 +51,10 @@ function clearElfSave(): void {
   void saveValue(KEY_ELF_SAVE, '');
 }
 const KEY_MUTED = 'muted';
-const KEY_CHAR = 'character';
+const KEY_CHAR = 'character';    // 예전 버전: 캐릭터 = 게임
+const KEY_GAME = 'gameSel';
+const KEY_SKIN = 'charSel';
+let adOffer = 0;   // 판이 끝난 뒤 광고로 한 번 더 받을 수 있는 코인
 const KEY_VIB = 'vibration';
 const KEY_TUT = (mode: GameMode) => `tut_${mode}`;   // 규칙 안내를 봤는지
 let vibration = true;
@@ -58,19 +65,27 @@ async function loadSaved(): Promise<void> {
   const prevKey = await loadValue('userKey');
   const userKey = await loadUserKey();
   if (prevKey && userKey && prevKey !== userKey) await resetRecords();
-  const modes = [...new Set(Characters.List.map((c) => c.mode))];
-  const [muted, ch, save, vib, ...rest] = await Promise.all([
-    loadValue(KEY_MUTED), loadValue(KEY_CHAR), loadValue(KEY_ELF_SAVE), loadValue(KEY_VIB),
-    ...Characters.List.map((_, i) => loadValue(KEY_BEST(i))), ...modes.map((m) => loadValue(KEY_TUT(m))),
+  await wallet.load(userKey);
+  const modes = Games.List.map((g) => g.mode);
+  const [muted, oldCh, gSel, cSel, save, vib, ...rest] = await Promise.all([
+    loadValue(KEY_MUTED), loadValue(KEY_CHAR), loadValue(KEY_GAME), loadValue(KEY_SKIN), loadValue(KEY_ELF_SAVE), loadValue(KEY_VIB),
+    ...Games.List.map((_, i) => loadValue(KEY_BEST(i))), ...modes.map((m) => loadValue(KEY_TUT(m))),
   ]);
-  const bests = rest.slice(0, Characters.List.length);
-  modes.forEach((m, i) => { if (rest[Characters.List.length + i] === '1') tutSeen.add(m); });
+  const bests = rest.slice(0, Games.List.length);
+  modes.forEach((m, i) => { if (rest[Games.List.length + i] === '1') tutSeen.add(m); });
   vibration = vib !== '0';
   elfSave = readElfSave(save);
   bests.forEach((v, i) => game.setBestRecord(i, Number(v) || 0));
+  // 예전 버전에서 엘프·성녀로 해 본 사람은 그 캐릭터를 그대로 쓰게
+  const free: string[] = [];
+  if ((Number(bests[1]) || 0) > 0 || elfSave) free.push('elf');
+  if ((Number(bests[2]) || 0) > 0) free.push('saint');
+  wallet.grantFree(free);
   audio.setMuted(muted === '1');
-  const c = Number(ch);
-  if (Number.isInteger(c) && c >= 0 && c < Characters.List.length) game.selectCharacter(c);
+  const gi = Number(gSel ?? oldCh);
+  if (Number.isInteger(gi) && gi >= 0 && gi < Games.List.length) game.selectGame(gi);
+  const ci = Number(cSel ?? 0);
+  if (Number.isInteger(ci) && wallet.owns(ci)) game.selectCharacter(ci);
 }
 
 // ---------- 화면 크기 ----------
@@ -89,7 +104,7 @@ function resize(): void {
     right: Math.max(0, rawInsets.right - (window.innerWidth - rect.right)),
   };
   // 꼬마 오르기는 아래 조작 공간을 넓혀서 큰 버튼을 둠
-  const climbing = Characters.List[game.state === 'playing' ? game.player.character : game.selected].mode === 'climb';
+  const climbing = Games.List[game.state === 'playing' ? game.playingGame : game.selectedGame].mode === 'climb';
   layout = makeLayout(w, h, dpr, insets, climbing ? 72 : undefined);
   game.setWorldHeight(layout.worldH);
 }
@@ -106,7 +121,7 @@ const ly = (e: { clientY: number }) => e.clientY - rect.top;
 function start(fresh = false): void {
   if (game.state !== 'menu' || isSheetOpen()) return;
   // 처음 하는 캐릭터면 규칙 안내부터
-  const mode = Characters.List[game.selected].mode;
+  const mode = Games.List[game.selectedGame].mode;
   if (hasTutorial(mode) && !tutSeen.has(mode)) {
     openTutorial(mode, () => {
       tutSeen.add(mode);
@@ -115,12 +130,14 @@ function start(fresh = false): void {
     });
     return;
   }
-  const isElf = Characters.List[game.selected].mode === 'swipe';
+  const isElf = mode === 'swipe';
   if (isElf && fresh) clearElfSave();
   resize();   // 캐릭터에 따라 아래 조작 공간 높이가 달라서, 시작 전에 화면 배치를 다시 계산
   game.startGame(isElf && elfSave ? elfSave : undefined);
   savedRound = game.swipe ? game.swipe.round : 0;
-  void saveValue(KEY_CHAR, String(game.selected));
+  adOffer = 0;
+  void saveValue(KEY_GAME, String(game.selectedGame));
+  void saveValue(KEY_SKIN, String(game.selectedChar));
 }
 
 function pause(): void {
@@ -138,7 +155,7 @@ function pause(): void {
 async function resetRecords(): Promise<void> {
   game.resetBestRecords();
   elfSave = null;
-  await Promise.all([...Characters.List.map((_, i) => saveValue(KEY_BEST(i), '0')), saveValue(KEY_ELF_SAVE, '')]);
+  await Promise.all([...Games.List.map((_, i) => saveValue(KEY_BEST(i), '0')), saveValue(KEY_ELF_SAVE, '')]);
 }
 
 function showSettings(): void {
@@ -162,10 +179,47 @@ function toggleMute(): void {
 }
 
 function finishGame(): void {
-  // 게임이 끝날 때마다 최고 점수 저장, 리더보드 제출
-  const ch = game.player.character;
-  void saveValue(KEY_BEST(ch), String(game.bestRecord(ch)));
+  // 게임이 끝날 때마다 최고 점수 저장, 리더보드 제출, 코인 지급
+  const gi = game.playingGame;
+  void saveValue(KEY_BEST(gi), String(game.bestRecord(gi)));
   void submitScore(game.score);
+  const coins = game.lastCoins;
+  if (coins > 0) {
+    wallet.add(coins);
+    adOffer = rewardedSupported() ? coins : 0;   // 광고를 보면 한 번 더
+  }
+}
+
+// ---------- 상점, 캐릭터, 광고 ----------
+const shopHooks: ShopHooks = {
+  selected: () => game.selectedChar,
+  select: (i) => {
+    if (!wallet.owns(i)) return;
+    game.selectCharacter(i);
+    void saveValue(KEY_SKIN, String(i));
+  },
+  reward: () => { audio.play('clear'); if (vibration) haptic('success'); },
+};
+
+function tapCharacter(i: number): void {
+  if (wallet.owns(i)) { shopHooks.select(i); if (vibration) haptic('tickWeak'); }
+  else openUnlock(i, shopHooks);
+}
+
+let adBusy = false;
+async function watchBonusAd(): Promise<void> {
+  if (adBusy || adOffer <= 0 || !rewardedReady()) return;
+  adBusy = true;
+  const offer = adOffer;
+  audio.setHidden(true);   // 광고 소리와 겹치지 않게
+  const earned = await showRewarded();
+  audio.setHidden(document.visibilityState === 'hidden');
+  adBusy = false;
+  if (earned && adOffer === offer) {
+    wallet.add(offer);
+    adOffer = 0;
+    shopHooks.reward();
+  }
 }
 
 function quit(): void {
@@ -173,6 +227,7 @@ function quit(): void {
   game.quitToMenu();
   finishGame();
 }
+
 
 // 진동: 너무 자주 울리지 않게 굵직한 순간에만
 const HAPTIC_OF: Partial<Record<GameEvent, 'tickWeak' | 'basicMedium' | 'success' | 'error'>> = {
@@ -332,10 +387,14 @@ function onTap(x: number, y: number): void {
     return;
   }
   if (game.state === 'menu') {
-    if (game.tapCard(w.x, w.y)) return;
+    for (let i = 0; i < Characters.List.length; i++) if (UI.charCard(i).contains(w.x, w.y)) { tapCharacter(i); return; }
+    for (let i = 0; i < Games.List.length; i++) if (UI.gameTab(i).contains(w.x, w.y)) { game.selectGame(i); void saveValue(KEY_GAME, String(i)); return; }
+    const ranking = leaderboardAvailable();
     if (UI.start.contains(w.x, w.y)) start();
-    else if (elfSave && Characters.List[game.selected].mode === 'swipe' && UI.newGame.contains(w.x, w.y)) start(true);
-    else if (leaderboardAvailable() && UI.ranking.contains(w.x, w.y)) void openLeaderboard();
+    else if (UI.coin.contains(w.x, w.y) || UI.shop(ranking).contains(w.x, w.y)) openShop(shopHooks);
+    else if (adOffer > 0 && UI.adBonus.contains(w.x, w.y)) void watchBonusAd();
+    else if (elfSave && Games.List[game.selectedGame].mode === 'swipe' && UI.newGame(adOffer > 0).contains(w.x, w.y)) start(true);
+    else if (ranking && UI.ranking.contains(w.x, w.y)) void openLeaderboard();
   }
 }
 
@@ -369,7 +428,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === ' ' || e.key === 'Enter') start();
     else if (e.key === 'ArrowLeft') game.moveSelection(-1);
     else if (e.key === 'ArrowRight') game.moveSelection(1);
-    else if (e.key >= '1' && e.key <= '3') game.selectCharacter(Number(e.key) - 1);
+    else if (e.key >= '1' && e.key <= '9') { const i = Number(e.key) - 1; if (i < Characters.List.length) tapCharacter(i); }
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
   else if (game.claim && overlay === 'none') {   // 땅따먹기: 방향키를 누르고 있는 동안 걸음
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { claimKeys.add(e.key); claimKeyDir(); }
@@ -440,7 +499,7 @@ function frame(now: number): void {
       if (h && (h !== 'tickWeak' || clock - lastHaptic > 0.08)) { haptic(h); lastHaptic = clock; }
     }
     if (e === 'gameOver') {
-      if (Characters.List[game.player.character].mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움 (엘프)
+      if (game.mode === 'swipe') clearElfSave();   // 끝난 판은 저장 지움 (룬 돌 깨기)
       finishGame();
     }
   }
@@ -461,20 +520,25 @@ function frame(now: number): void {
     rankingVisible: leaderboardAvailable(),
     elfSaveRound: elfSave ? elfSave.round : 0,
     time: clock,
+    coins: wallet.coins,
+    owned: (i) => wallet.owns(i),
+    adOffer,
+    adReady: rewardedReady(),
   });
   requestAnimationFrame(frame);
 }
 
 // 개발 서버에서만: 브라우저 자동 확인용으로 게임 상태를 노출
 if (import.meta.env.DEV) {
-  const w = window as unknown as { __game: Game; __layout: () => Layout; __audio: Audio; __menuTop: () => number };
+  const w = window as unknown as { __game: Game; __layout: () => Layout; __audio: Audio; __menuTop: () => number; __wallet: typeof wallet };
   w.__menuTop = menuTop;
+  w.__wallet = wallet;
   w.__game = game;
   w.__audio = audio;
   w.__layout = () => layout;
 }
 
 resize();
-void loadSaved();
+void loadSaved().then(() => { initAds(); return initIap(); });
 void loadImages();
 requestAnimationFrame((t) => { last = t; frame(t); });

@@ -25,6 +25,11 @@
 
         </activity>
 
+        <!-- AdMob 앱 ID (strings.xml 의 admob_app_id). 없으면 앱이 켜지자마자 꺼진다 -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="@string/admob_app_id"/>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

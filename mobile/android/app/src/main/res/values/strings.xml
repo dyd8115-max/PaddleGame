@@ -4,4 +4,6 @@
     <string name="title_activity_main">레트로 오락실</string>
     <string name="package_name">com.dyd8115.blockbreaker</string>
     <string name="custom_url_scheme">com.dyd8115.blockbreaker</string>
+    <!-- AdMob 앱 ID. 지금은 구글 공개 테스트 ID. AdMob 콘솔의 앱 ID(ca-app-pub-…~…)로 바꾼다 -->
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
 </resources>

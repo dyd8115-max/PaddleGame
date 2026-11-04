@@ -9,9 +9,11 @@ import { Climb } from './climb';
 import { Horde } from './horde';
 import { Claim } from './claim';
 import {
-  BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
+  BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, Games, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
 } from './objects';
+
+const PADDLE_W = 80;
 
 export type GameState = 'menu' | 'playing';
 export type GameResult = 'none' | 'gameover';
@@ -88,12 +90,15 @@ export class Game {
   private state_: GameState = 'menu';
   private lastResult_: GameResult = 'none';
   private score_ = 0;
-  private best_ = [0, 0, 0];   // 캐릭터별 최고 기록 (스테이지, 쏜 공 수, 버틴 초)
+  private best_ = Games.List.map(() => 0);   // 게임별 최고 기록 (스테이지, 라운드, 버틴 초)
   private stage_ = 1;
   private background_ = -1;
   private serveTimer_ = 0;
   private introTime_ = 0;
-  private selected_ = 0;
+  private selChar_ = 0;       // 메뉴에서 고른 캐릭터
+  private selGame_ = 0;       // 메뉴에서 고른 게임
+  private playGame_ = 0;      // 지금(또는 방금) 하는 게임
+  private lastCoins_ = 0;     // 방금 끝난 판에서 받은 코인
   private menuTime_ = 0;
   private lastRecord_ = 0;    // 방금 끝난 판의 기록
   private survivalTime_ = 0;  // 성녀: 버틴 시간
@@ -129,8 +134,10 @@ export class Game {
   get state(): GameState { return this.state_; }
   get lastResult(): GameResult { return this.lastResult_; }
   get score(): number { return this.score_; }
-  get mode() { return Characters.List[this.player.character].mode; }
-  bestRecord(ch: number): number { return this.best_[ch]; }
+  get mode() { return Games.List[this.playGame_].mode; }
+  get playingGame(): number { return this.playGame_; }
+  get lastCoins(): number { return this.lastCoins_; }
+  bestRecord(gi: number): number { return this.best_[gi]; }
   get lastRecord(): number { return this.lastRecord_; }
   get survivalTime(): number { return this.survivalTime_; }
   get dangerY(): number { return this.paddle.y - DANGER_ABOVE_PADDLE; }
@@ -153,7 +160,8 @@ export class Game {
   get stage(): number { return this.stage_; }
   get background(): number { return this.background_; }
   get serving(): boolean { return this.serveTimer_ > 0; }
-  get selected(): number { return this.selected_; }
+  get selectedChar(): number { return this.selChar_; }
+  get selectedGame(): number { return this.selGame_; }
   get menuTime(): number { return this.menuTime_; }
 
   brickReveal(k: Brick): number {
@@ -191,33 +199,28 @@ export class Game {
   }
 
   // ---------- 입력 ----------
-  setBestRecord(ch: number, v: number): void { this.best_[ch] = Math.max(this.best_[ch], v); }
+  setBestRecord(gi: number, v: number): void { this.best_[gi] = Math.max(this.best_[gi], v); }
   resetBestRecords(): void { this.best_ = this.best_.map(() => 0); this.lastRecord_ = 0; this.lastResult_ = 'none' as GameResult; }
 
   setPaddleTarget(x: number): void { this.paddle.targetX = x; }
 
+  // 메뉴에서 캐릭터 고르기 (해금 여부는 부르는 쪽에서 확인)
   selectCharacter(i: number): void {
     if (this.state_ !== 'menu') return;
     if (i < 0 || i >= Characters.List.length) return;
-    this.selected_ = i;
-    this.menuTime_ = 0;
+    if (i !== this.selChar_) this.menuTime_ = 0;
+    this.selChar_ = i;
+  }
+
+  selectGame(i: number): void {
+    if (this.state_ !== 'menu') return;
+    if (i < 0 || i >= Games.List.length) return;
+    this.selGame_ = i;
   }
 
   moveSelection(delta: number): void {
-    const n = Characters.List.length;
-    this.selectCharacter((this.selected_ + delta + n) % n);
-  }
-
-  // 메뉴에서 누른 곳이 캐릭터 카드면 선택하고 true
-  tapCard(x: number, y: number): boolean {
-    if (this.state_ !== 'menu') return false;
-    for (let i = 0; i < Characters.List.length; i++) {
-      if (Characters.cardRect(i).contains(x, y)) {
-        this.selectCharacter(i);
-        return true;
-      }
-    }
-    return false;
+    const n = Games.List.length;
+    this.selectGame((this.selGame_ + delta + n) % n);
   }
 
   // save: 엘프 모드 중간 저장에서 이어 하기
@@ -226,10 +229,12 @@ export class Game {
     this.score_ = 0;
     this.stage_ = 1;
     this.lastResult_ = 'none';
-    this.player.character = this.selected_;
+    this.player.character = this.selChar_;
+    this.playGame_ = this.selGame_;
+    this.lastCoins_ = 0;
     this.player.animTime = 0;
-    const ch = Characters.List[this.selected_];
-    this.paddle.w = ch.paddleW;
+    const ch = Games.List[this.selGame_];
+    this.paddle.w = PADDLE_W;
     this.updatePaddle();
     this.player.x = this.paddle.bounds().centerX - this.player.w * 0.5;
     this.player.walking = false;
@@ -533,10 +538,10 @@ export class Game {
 
   // ---------- 내부 ----------
   private startStage(wait: boolean): void {
-    const ch = Characters.List[this.player.character];
+    const ch = { mode: this.mode };
     this.balls = [];
     this.items = [];
-    this.paddle.w = ch.paddleW;   // 아이템으로 바뀐 패들 길이는 스테이지마다 원래대로
+    this.paddle.w = PADDLE_W;   // 아이템으로 바뀐 패들 길이는 스테이지마다 원래대로
     this.updatePaddle();
     if (ch.mode === 'mine') this.resetMineBricks(); else this.resetBricks();
     this.introTime_ = 0;
@@ -553,7 +558,7 @@ export class Game {
   }
 
   private ballSpeed(kind: BallKind = 'white'): number {
-    const mul = Characters.List[this.player.character].speedMul;   // 성녀는 1.5배
+    const mul = Games.List[this.playGame_].speedMul;   // 빛의 방벽은 1.5배
     const step = this.mode === 'mine' ? MINE_SPEED_STEP : SPEED_STEP;
     const white = BALL_SPEED * mul * Math.min(SPEED_MAX, Math.pow(step, this.stage_ - 1));
     return Math.min(SPEED_ABS_MAX, white * BALL_SPEED_MUL[kind]);
@@ -891,11 +896,24 @@ export class Game {
     d.y = this.paddle.y - DevilSprite.Cell - d.lift;
   }
 
+  // 판이 끝날 때 받는 코인. 1분에 3~4개쯤
+  private coinsEarned(): number {
+    if (this.mode === 'claim' && this.claim) {
+      const c = this.claim;
+      return 20 * (c.stage - 1) + Math.floor(c.percent * 20) + 3 * c.kills;
+    }
+    if (this.mode === 'swipe' && this.swipe) return Math.max(0, this.swipe.round - 1);
+    if (this.mode === 'survival') return Math.floor(this.survivalTime_ / 3);
+    return 0;
+  }
+
   private endGame(result: GameResult): void {
     this.lastResult_ = result;
     this.lastRecord_ = this.record;
-    const ch = this.player.character;
-    this.best_[ch] = Math.max(this.best_[ch], this.lastRecord_);
+    const gi = this.playGame_;
+    this.best_[gi] = Math.max(this.best_[gi], this.lastRecord_);
+    // 룬 돌 깨기는 그만두면 저장해 두고 나중에 이어 하니까, 코인은 끝까지 했을 때만
+    this.lastCoins_ = result === 'none' && this.mode === 'swipe' ? 0 : this.coinsEarned();
     this.balls = [];
     this.items = [];
     this.swipe = null;

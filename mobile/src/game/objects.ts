@@ -11,7 +11,7 @@ export const menuTop = (): number => (World.Height - MENU_H) / 2;
 // 플레이 중 캐릭터를 메뉴 카드 그림보다 크게
 export const PLAYER_SCALE = 1.5;
 
-// 캐릭터마다 게임 방식과 기록이 다르다 (특수 능력은 없음)
+// 게임 방식 (캐릭터와는 따로 고름)
 // claim:    땅따먹기. 큰 맵에서 악마들과 선을 그어 땅을 뺏음, 절반을 차지하면 다음 스테이지. 도달한 스테이지 (꼬마)
 // climb:    떨어지는 테트리스 블록을 피하며 밟고 올라 차오르는 용암을 피함. 버틴 시간 (지금은 쓰지 않음)
 // horde:    가운데 블록 뭉치 위에서 사방의 괴물로부터 블록을 지킴. 떨어지면 끝 (지금은 쓰지 않음)
@@ -22,44 +22,46 @@ export const PLAYER_SCALE = 1.5;
 // stage:    패들로 받아 벽돌을 깨고 다음 맵으로 (지금은 쓰지 않음)
 export type GameMode = 'stage' | 'claim' | 'climb' | 'horde' | 'mine' | 'swipe' | 'archer' | 'survival';
 
+// 게임 종류. 순서가 곧 최고 기록 저장 번호라서 바꾸면 안 됨 (새 게임은 뒤에 추가)
+export interface GameDef {
+  mode: GameMode;
+  name: string;       // 메뉴 탭 이름
+  ability: string;    // 메뉴에 보이는 한 줄 설명
+  speedMul: number;   // 공 빠르기 배율
+}
+
+export const Games = {
+  List: [
+    { mode: 'claim', name: '땅따먹기', ability: '선을 그어 땅 차지 · 몇 스테이지까지 갈까', speedMul: 1 },
+    { mode: 'swipe', name: '룬 돌 깨기', ability: '화살로 룬 돌 깨기 · 몇 라운드까지 갈까', speedMul: 1 },
+    { mode: 'survival', name: '빛의 방벽', ability: '내려오는 색유리를 몇 초 버틸까', speedMul: 1.5 },
+  ] as GameDef[],
+  indexOf(mode: GameMode): number { return Games.List.findIndex((g) => g.mode === mode); },
+};
+
+// 캐릭터는 어느 게임에서든 쓸 수 있는 겉모습. 꼬마는 기본, 나머지는 코인으로 해금
+export type CharacterId = 'kid' | 'elf' | 'saint' | 'knight';
 export interface CharacterDef {
+  id: CharacterId;
   name: string;
   fps: number;        // 걷기 애니메이션 속도
-  mode: GameMode;
-  ability: string;    // 메뉴에 보이는 한 줄 설명
-  hints: [string, string];   // 메뉴 아래 안내 두 줄
-  speedMul: number;   // 공 빠르기 배율
-  paddleW: number;    // 패들 길이
+  sheet: 'characters' | 'knight';   // 그림 파일
+  row: number;        // 그림 파일 안의 줄
+  frames: number;     // 걷기 장 수
+  price: number;      // 해금 코인 (0 = 기본 제공)
+  desc: string;       // 상점 한 줄 소개
 }
 
 export const Characters = {
-  FrameCount: 16,
-  CellW: 67,     // 그리기 크기 (논리 좌표). 그림 파일은 2배 크기
+  CellW: 67,     // 그리기 크기 (논리 좌표). 그림 파일은 3배 크기
   CellH: 80,
   List: [
-    {
-      name: 'KID', fps: 15, mode: 'claim', speedMul: 1, paddleW: 80,
-      ability: '땅따먹기 · 몇 스테이지까지 갈까',
-      hints: ['화면 어디든 누른 채 끌면 그쪽으로 자유롭게, 떼면 멈춰요', '선으로 둘러싸 땅 차지! 악마 선을 밟으면 처치, 내 선을 밟히면 목숨 -1'],
-    },
-    {
-      name: 'ELF', fps: 13, mode: 'swipe', speedMul: 1, paddleW: 80,
-      ability: '룬 돌 깨기 · 몇 라운드까지 갈까',
-      hints: ['풀밭 아래를 밀어 자리 고르고, 위를 당겨 조준', '숫자만큼 화살을 맞히면 룬 돌이 깨져요'],
-    },
-    {
-      name: 'SAINT', fps: 16, mode: 'survival', speedMul: 1.5, paddleW: 80,
-      ability: '빛의 방벽 · 내려오는 색유리를 몇 초 버틸까',
-      hints: ['화면 아래쪽을 좌우로 밀어 빛의 방벽을 움직여요', '3초마다 색유리가 한 줄씩 내려와요. 선에 닿으면 끝'],
-    },
+    { id: 'kid', name: '꼬마', fps: 15, sheet: 'characters', row: 0, frames: 16, price: 0, desc: '모자를 쓴 씩씩한 꼬마' },
+    { id: 'elf', name: '엘프', fps: 13, sheet: 'characters', row: 1, frames: 16, price: 200, desc: '활을 멘 숲의 엘프' },
+    { id: 'saint', name: '성녀', fps: 16, sheet: 'characters', row: 2, frames: 16, price: 200, desc: '빛의 지팡이를 든 성녀' },
+    { id: 'knight', name: '기사', fps: 14, sheet: 'knight', row: 0, frames: 16, price: 500, desc: '붉은 머리의 검사' },
   ] as CharacterDef[],
-
-  // 시작 메뉴의 캐릭터 카드 위치 (논리 좌표)
-  cardRect(i: number): Rect {
-    const w = 120, h = 150, gap = 30, n = 3;
-    const left = (World.Width - (w * n + gap * (n - 1))) * 0.5;
-    return new Rect(left + i * (w + gap), 150, w, h);
-  },
+  indexOf(id: string): number { return Characters.List.findIndex((c) => c.id === id); },
 };
 
 export const BackgroundCount = 6;
@@ -99,8 +101,8 @@ export class Player {
 
   frame(): number {
     if (!this.walking) return 0;
-    const fps = Characters.List[this.character].fps;
-    return Math.floor(this.animTime * fps) % Characters.FrameCount;
+    const c = Characters.List[this.character];
+    return Math.floor(this.animTime * c.fps) % c.frames;
   }
   bounds(): Rect { return new Rect(this.x, this.y, this.w, this.h); }
 }
