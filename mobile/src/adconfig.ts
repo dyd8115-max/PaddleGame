@@ -1,17 +1,19 @@
 // 광고·결제 상품 ID 모음. 콘솔에서 받은 값으로 바꾸는 곳은 여기 한 군데뿐이다
 //
-// 지금 값은 전부 '테스트용'이라 광고를 봐도 수익이 생기지 않는다.
-// 출시 전에 실제 ID 로 바꾸고 TEST_ADS 를 false 로.
+// 실제 ID 는 들어가 있고, 테스트 기간에는 테스트 광고를 쓴다 (ADMOB_TEST_ADS).
+// 토스 광고 그룹 ID 는 아직 테스트 값 (앱인토스 콘솔에서 받으면 바꾼다).
 
 // 준비가 덜 됐으면 false 로 꺼 두면 버튼이 숨겨진다 (코인은 게임으로만 모임)
 export const ENABLE_ADS = true;
 export const ENABLE_IAP = true;
 
-// 구글이 공개한 테스트 ID (https://developers.google.com/admob/android/test-ads)
+// TEST_ADS 가 true 면 구글 공개 테스트 광고 (https://developers.google.com/admob/android/test-ads)
+// 개발·테스트 중에 실제 광고를 보거나 누르면 부정 클릭으로 계정이 정지될 수 있어서, 정식 출시 때만 false 로
+const ADMOB_TEST_ADS = true;
 export const ADMOB = {
-  TEST_ADS: true,
-  // 보상형 광고 단위 ID: AdMob 콘솔 → 앱 → 광고 단위 → 보상형
-  REWARDED: 'ca-app-pub-3940256099942544/5224354917',
+  TEST_ADS: ADMOB_TEST_ADS,
+  // 보상형 광고 단위 ID: AdMob 콘솔 → 앱 → 레트로 오락실 → 광고 단위 → 코인 보상
+  REWARDED: ADMOB_TEST_ADS ? 'ca-app-pub-3940256099942544/5224354917' : 'ca-app-pub-7096143948158843/9988659242',
 };
 // 앱 ID 는 안드로이드 설정(android/app/src/main/res/values/strings.xml 의 admob_app_id)에 있다
 
