@@ -66,7 +66,9 @@ jobs:
           # 복사할 때 섞인 줄바꿈·공백 같은 글자는 걸러 낸다
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -cd 'A-Za-z0-9+/=' | base64 -d > "$ANDROID_KEYSTORE_FILE"
           # 키 파일과 비밀번호가 맞는지 먼저 확인 (틀리면 여기서 알기 쉽게 멈춤)
-          if ! keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>"$RUNNER_TEMP/keytool.err"; then
+          echo "키 글자 수: $(printf '%s' "$ANDROID_KEYSTORE_BASE64" | wc -c), 풀어 낸 파일 크기: $(stat -c %s "$ANDROID_KEYSTORE_FILE") 바이트, 앞부분: $(head -c 4 "$ANDROID_KEYSTORE_FILE" | od -An -tx1)"
+          echo "비밀번호 길이: ${#ANDROID_KEYSTORE_PASSWORD}, 별칭 길이: ${#ANDROID_KEY_ALIAS}"
+          if ! keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >"$RUNNER_TEMP/keytool.err" 2>&1; then
             cat "$RUNNER_TEMP/keytool.err" | tee -a "$RUNNER_TEMP/build.log"
             echo "::error title=업로드 키 확인 실패::키 파일, 비밀번호, 별칭(upload) 중 하나가 맞지 않습니다."
             exit 1
