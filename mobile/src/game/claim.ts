@@ -51,7 +51,26 @@ export interface Player {
   plan: [number, number, number][];   // [dx, dy, 칸 수]
   mode: 'home' | 'out' | 'return' | 'hunt';
   wait: number;
+  pers: Personality;
+  zig: boolean;                       // 대각선 계획에서 가로·세로를 번갈아
+  target: number;                     // 사냥 중 노리는 칸
 }
+
+// 악마 성격 (splix.io 봇들의 설정을 참고: 사냥 범위, 위험을 느끼는 여유, 최대 선 길이, 도는 크기)
+export interface Personality {
+  name: string;
+  huntRange: number;    // 이 거리(칸) 안의 꼬마 선만 노림
+  huntSlack: number;    // 꼬마가 집에 가는 시간보다 이만큼(초) 늦어도 쫓아감 (클수록 무모)
+  fear: number;         // 밖에 있을 때 꼬마와의 시간 여유(초). 이보다 가까워지면 집으로
+  maxTrail: number;     // 선이 이만큼 길어지면 집으로
+  loop: number;         // 고리 크기 배수
+  rest: number;         // 쉬는 시간 배수
+}
+const PERSONALITIES: Personality[] = [
+  { name: '공격형', huntRange: 30, huntSlack: 0.5, fear: 0.4, maxTrail: 22, loop: 0.8, rest: 0.6 },
+  { name: '욕심형', huntRange: 14, huntSlack: 0.1, fear: 0.8, maxTrail: 42, loop: 1.5, rest: 0.8 },
+  { name: '겁쟁이', huntRange: 9, huntSlack: -0.1, fear: 1.5, maxTrail: 16, loop: 0.7, rest: 1.3 },
+];
 
 const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -119,6 +138,7 @@ export class Claim {
     return {
       id, c, r, x: (c + 0.5) * CC, y: (r + 0.5) * CC, dir: [0, 0], alive: true, respawn: 0, trail: [], leaveC: c, leaveR: r, step: 0,
       speed: id === KID ? KID_SPEED : devilSpeed, plan: [], mode: 'home', wait: rand(0.2, 1.2),
+      pers: PERSONALITIES[(id - 1 + PERSONALITIES.length) % PERSONALITIES.length], zig: false, target: -1,
     };
   }
 
@@ -192,9 +212,10 @@ export class Claim {
         }
       } else p.step = Math.min(p.step, 0.6);
       // 그리는 위치는 칸 가운데를 부드럽게 따라감
-      const k = Math.min(1, dt * p.speed * 1.6);
-      p.x += ((p.c + 0.5) * CC - p.x) * k;
-      p.y += ((p.r + 0.5) * CC - p.y) * k;
+      // 그리는 위치: 지금 칸 가운데를 향해 일정한 빠르기로 미끄러지듯 (칸을 건너뛰는 느낌 없이)
+      const tx = (p.c + 0.5) * CC, ty = (p.r + 0.5) * CC, dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy);
+      const mv = p.speed * CC * 1.15 * dt;
+      if (d <= mv || d > CC * 3) { p.x = tx; p.y = ty; } else { p.x += dx / d * mv; p.y += dy / d * mv; }
     }
     this.follow(dt);
   }
@@ -361,34 +382,39 @@ export class Claim {
     p.wait -= dt;
     // 무거운 판단은 칸을 옮기기 직전(dt = 0)이나 멈춰 있을 때만
     if (dt > 0 && (p.dir[0] !== 0 || p.dir[1] !== 0)) return;
-    if (p.wait > 0 && p.trail.length === 0 && p.mode === 'home') { p.dir = [0, 0]; return; }
+    if (p.wait > 0 && p.trail.length === 0 && p.mode === 'home') { this.wander(p); return; }
     this.decide(p);
   }
 
-  // 악마 판단
-  // 1) 꼬마 선을 꼬마가 집에 가기 전에 끊을 수 있으면 끊으러 감
+  // 악마 판단 (성격마다 숫자가 다름)
+  // 1) 사냥: 꼬마가 집에 돌아가기 전에 꼬마 선에 닿을 수 있으면 끊으러 감.
+  //    다른 악마가 이미 노리는 곳과 먼 쪽을 노려서 여럿이 앞뒤에서 같이 노림
   // 2) 밖에 나와 있으면: 꼬마가 내 선에 닿는 시간과 내가 집에 가는 시간을 견줘서 위험하면 바로 집으로
-  // 3) 집에 있으면: 빈 곳(또는 꼬마 땅) 쪽으로 고리 모양 계획을 세워 나감. 꼬마가 가까우면 작게, 멀면 크게
+  // 3) 집에 있으면: 빈 곳(또는 꼬마 땅) 쪽으로 네모·대각선·지그재그 고리를 세워 나감. 쉬는 동안엔 자기 땅 안을 어슬렁
   private decide(p: Player): void {
     const kid = this.kid;
     const outside = p.trail.length > 0;
+    const P = p.pers;
 
     if (kid.trail.length > 0 && this.hurtTimer <= 0) {
-      const hunt = this.bfs(p, (i) => this.trail[i] === KID, 22);
+      // 다른 사냥꾼이 노리는 칸 근처는 피함
+      const taken = this.players.filter((q) => q !== p && q.alive && q.mode === 'hunt' && q.target >= 0).map((q) => q.target);
+      const goal = (i: number) => this.trail[i] === KID && !taken.some((t) => Math.abs(t % this.cols - i % this.cols) + Math.abs(Math.floor(t / this.cols) - Math.floor(i / this.cols)) < 6);
+      let hunt = this.bfs(p, goal, P.huntRange);
+      if (!hunt.dir) hunt = this.bfs(p, (i) => this.trail[i] === KID, P.huntRange);
       if (hunt.dir) {
-        const kidHome = this.nearestOwned(kid.c, kid.r, KID);
-        const iGet = hunt.dist / p.speed, kidGets = kidHome / KID_SPEED;
+        const iGet = hunt.dist / p.speed, kidGets = this.kidHomeTime();
         const safe = !outside || this.threat(p) / KID_SPEED > this.bfs(p, (i) => this.owner[i] === p.id, 90).dist / p.speed;
-        if (iGet < kidGets + 0.25 && safe) { p.mode = 'hunt'; p.dir = hunt.dir; return; }
+        if (iGet < kidGets + P.huntSlack && safe) { p.mode = 'hunt'; p.target = hunt.target; p.dir = hunt.dir; return; }
       }
     }
-    if (p.mode === 'hunt') { p.mode = outside ? 'return' : 'home'; p.plan = []; }
+    if (p.mode === 'hunt') { p.mode = outside ? 'return' : 'home'; p.plan = []; p.target = -1; }
 
     if (outside) {
       const home = this.bfs(p, (i) => this.owner[i] === p.id, 120);
       const tHome = home.dist / p.speed, tKid = this.threat(p) / KID_SPEED;
-      const tooLong = p.trail.length > 24 + this.stage * 4;
-      if (p.mode !== 'out' || !p.plan.length || tKid < tHome + 0.7 || tooLong) {
+      const tooLong = p.trail.length > P.maxTrail + this.stage * 3;
+      if (p.mode !== 'out' || !p.plan.length || tKid < tHome + P.fear || tooLong) {
         p.mode = 'return';
         p.plan = [];
         p.dir = home.dir ?? this.anySafeDir(p);
@@ -401,41 +427,57 @@ export class Claim {
     // 집에 있음. 막 돌아왔으면 잠깐 쉼 (스테이지가 오를수록 짧게)
     if (p.mode === 'return') {
       p.mode = 'home';
-      p.wait = rand(0.7, 1.6) * Math.max(0.25, 1 - 0.15 * (this.stage - 1));
+      p.wait = rand(0.6, 1.4) * P.rest * Math.max(0.25, 1 - 0.15 * (this.stage - 1));
     }
     if (p.mode !== 'out' || !p.plan.length) {
-      if (p.wait > 0) { p.mode = 'home'; p.dir = [0, 0]; return; }
+      if (p.wait > 0) { p.mode = 'home'; this.wander(p); return; }
+      // 꼬마가 너무 가까우면(겁쟁이일수록 멀리서도) 나가지 않고 어슬렁
+      const kd = Math.hypot(kid.c - p.c, kid.r - p.r);
+      if (kd < 3 + P.fear * 4 && kid.trail.length === 0) { p.wait = 0.4; this.wander(p); return; }
       this.makePlan(p);
     }
     this.followPlan(p);
   }
 
+  // 자기 땅 안에서 어슬렁 (땅 밖으로는 안 나감, 되도록 직진)
+  private wander(p: Player): void {
+    const ok = (d: [number, number]) => {
+      const nc = p.c + d[0], nr = p.r + d[1];
+      return this.inside(nc, nr) && this.owner[this.idx(nc, nr)] === p.id;
+    };
+    if ((p.dir[0] !== 0 || p.dir[1] !== 0) && ok(p.dir) && Math.random() < 0.8) return;
+    const opts = DIRS.filter(ok);
+    p.dir = opts.length ? [...opts[Math.floor(Math.random() * opts.length)]] as [number, number] : [0, 0];
+  }
+
   private followPlan(p: Player): void {
     while (p.plan.length && p.plan[0][2] <= 0) p.plan.shift();
-    if (!p.plan.length) {   // 계획을 다 했으면 집으로 (밖이면 다음 판단에서 돌아감)
+    if (!p.plan.length) {
       const home = this.bfs(p, (i) => this.owner[i] === p.id, 120);
       p.mode = p.trail.length > 0 ? 'return' : 'home';
       p.dir = p.trail.length > 0 ? (home.dir ?? this.anySafeDir(p)) : [0, 0];
       return;
     }
     const leg = p.plan[0];
-    const nc = p.c + leg[0], nr = p.r + leg[1];
+    // 대각선 다리: 가로·세로를 번갈아
+    let d: [number, number] = [leg[0], leg[1]];
+    if (leg[0] !== 0 && leg[1] !== 0) { d = p.zig ? [leg[0], 0] : [0, leg[1]]; }
+    const nc = p.c + d[0], nr = p.r + d[1];
     if (!this.inside(nc, nr) || this.trail[this.idx(nc, nr)] === p.id) { p.plan.shift(); this.followPlan(p); return; }
+    if (leg[0] !== 0 && leg[1] !== 0) p.zig = !p.zig;
     if (this.owner[this.idx(nc, nr)] !== p.id) leg[2]--;   // 밖으로 나간 칸만 셈
-    p.dir = [leg[0], leg[1]];
+    p.dir = d;
     p.mode = 'out';
   }
 
-  // 나갈 방향과 크기 정하기
+  // 나갈 방향과 모양, 크기 정하기
   private makePlan(p: Player): void {
-    // 내 땅 가운데
     let sx = 0, sy = 0, n = 0;
-    for (let i = 0; i < this.owner.length; i += 1) if (this.owner[i] === p.id) { sx += i % this.cols; sy += Math.floor(i / this.cols); n++; }
+    for (let i = 0; i < this.owner.length; i++) if (this.owner[i] === p.id) { sx += i % this.cols; sy += Math.floor(i / this.cols); n++; }
     const cx = n ? sx / n : p.c, cy = n ? sy / n : p.r;
     const kid = this.kid;
     let best: [number, number] = DIRS[0], bs = -Infinity;
     for (const d of DIRS) {
-      // 그 방향 앞쪽 몇 칸이 얼마나 비었는지, 꼬마 땅이 있는지 (뺏을 거리)
       let open = 0, steal = 0, edge = false;
       for (let k = 1; k <= 8; k++) {
         const c = p.c + d[0] * k, r = p.r + d[1] * k;
@@ -446,43 +488,53 @@ export class Claim {
       }
       const away = d[0] * (p.c - cx) + d[1] * (p.r - cy);
       const toKid = d[0] * Math.sign(kid.c - p.c) + d[1] * Math.sign(kid.r - p.r);
-      const score = open * 1.2 + steal * 0.8 + away * 0.4 + (edge ? -6 : 0) + toKid * (this.stage >= 2 ? 0.6 : 0) + Math.random() * 3;
+      const greedy = p.pers.loop > 1 ? 1.5 : 0.8;
+      const score = open * 1.2 + steal * greedy + away * 0.4 + (edge ? -6 : 0) + toKid * (this.stage >= 2 ? 0.6 : 0) + Math.random() * 3;
       if (score > bs) { bs = score; best = d; }
     }
-    const kidDist = Math.abs(kid.c - p.c) + Math.abs(kid.r - p.r);
-    const bold = Math.max(0.25, Math.min(1, (kidDist - 6) / 22));   // 꼬마가 멀수록 크게
-    const a = Math.round(2 + (2 + this.stage) * bold * rand(0.6, 1.2));
-    const b = Math.round(3 + (3 + this.stage) * bold * rand(0.6, 1.2));
+    const kidDist = Math.hypot(kid.c - p.c, kid.r - p.r);
+    const bold = Math.max(0.25, Math.min(1, (kidDist - 6) / 22)) * p.pers.loop;
+    const a = Math.max(2, Math.round(2 + (2 + this.stage) * bold * rand(0.6, 1.2)));
+    const b = Math.max(2, Math.round(3 + (3 + this.stage) * bold * rand(0.6, 1.2)));
     const side: [number, number] = best[0] === 0 ? [Math.random() < 0.5 ? 1 : -1, 0] : [0, Math.random() < 0.5 ? 1 : -1];
-    p.plan = [[best[0], best[1], a], [side[0], side[1], b], [-best[0], -best[1], a + 2]];
+    const shape = Math.random();
+    if (shape < 0.45) {          // 네모
+      p.plan = [[best[0], best[1], a], [side[0], side[1], b], [-best[0], -best[1], a + 2]];
+    } else if (shape < 0.75) {   // 대각선으로 나갔다가 옆으로
+      p.plan = [[best[0] + side[0], best[1] + side[1], a * 2], [side[0], side[1], Math.ceil(b / 2)], [-best[0], -best[1], a + 2]];
+    } else {                     // 지그재그로 옆으로 훑기
+      p.plan = [[best[0], best[1], a], [side[0], side[1], 2], [best[0], best[1], 2], [side[0], side[1], 2], [-best[0], -best[1], 2], [side[0], side[1], b], [-best[0], -best[1], a + 2]];
+    }
+    p.zig = Math.random() < 0.5;
     p.mode = 'out';
   }
 
-  // 꼬마가 내 선(또는 머리)에 닿기까지 걸리는 칸 수 (대략)
+  // 꼬마가 내 선(또는 머리)에 닿기까지 걸리는 칸 수 (꼬마는 자유롭게 움직이니 직선 거리)
   private threat(p: Player): number {
     const kid = this.kid;
     if (this.hurtTimer > 0) return 99;
-    let d = Math.abs(kid.c - p.c) + Math.abs(kid.r - p.r);
-    for (const i of p.trail) d = Math.min(d, Math.abs(kid.c - i % this.cols) + Math.abs(kid.r - Math.floor(i / this.cols)));
+    let d = Math.hypot(kid.c - p.c, kid.r - p.r);
+    for (const i of p.trail) d = Math.min(d, Math.hypot(kid.c - i % this.cols, kid.r - Math.floor(i / this.cols)));
     return d;
   }
 
-  // (c, r) 에서 id 땅까지 가장 가까운 거리 (칸)
-  private nearestOwned(c: number, r: number, id: number): number {
+  // 꼬마가 지금 자기 땅에 들어가기까지 걸리는 시간 (초, 직선 거리로 어림)
+  private kidHomeTime(): number {
+    const kid = this.kid;
     let bd = 999;
     for (let i = 0; i < this.owner.length; i++) {
-      if (this.owner[i] !== id) continue;
-      const d = Math.abs(i % this.cols - c) + Math.abs(Math.floor(i / this.cols) - r);
+      if (this.owner[i] !== KID) continue;
+      const d = Math.hypot(i % this.cols - kid.c, Math.floor(i / this.cols) - kid.r);
       if (d < bd) bd = d;
     }
-    return bd;
+    return bd / KID_SPEED;
   }
 
   // 길 찾기: 자기 선을 피해서 goal 칸까지 가장 짧은 길의 첫 걸음과 거리
   private bfsQueue = new Int32Array(MAP_COLS * MAP_ROWS);
   private bfsFirst = new Int8Array(MAP_COLS * MAP_ROWS);
   private bfsDist = new Int16Array(MAP_COLS * MAP_ROWS);
-  private bfs(p: Player, goal: (i: number) => boolean, maxDist: number): { dir: [number, number] | null; dist: number } {
+  private bfs(p: Player, goal: (i: number) => boolean, maxDist: number): { dir: [number, number] | null; dist: number; target: number } {
     const C = this.cols, R = this.rows;
     const first = this.bfsFirst, dist = this.bfsDist, q = this.bfsQueue;
     dist.fill(-1);
@@ -492,7 +544,7 @@ export class Claim {
     q[tail++] = s;
     while (head < tail) {
       const i = q[head++];
-      if (i !== s && goal(i)) { const d = DIRS[first[i]]; return { dir: [d[0], d[1]], dist: dist[i] }; }
+      if (i !== s && goal(i)) { const d = DIRS[first[i]]; return { dir: [d[0], d[1]], dist: dist[i], target: i }; }
       if (dist[i] >= maxDist) continue;
       const c = i % C, r = (i - c) / C;
       for (let k = 0; k < 4; k++) {
@@ -506,7 +558,7 @@ export class Claim {
         q[tail++] = j;
       }
     }
-    return { dir: null, dist: 999 };
+    return { dir: null, dist: 999, target: -1 };
   }
 
   // 갈 곳이 없을 때: 자기 선만 피해서 아무 쪽으로

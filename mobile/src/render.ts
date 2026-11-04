@@ -232,6 +232,18 @@ function drawClaimDevil(ctx: Ctx, c: Claim, p: Player, t: number): void {
     ctx.fillStyle = '#1a1020';
     ctx.beginPath(); ctx.arc(x + s * 5 + dx * 1.4, y - 2 + bob + dy * 1.4, 2, 0, Math.PI * 2); ctx.fill();
   }
+  // 성격 표정: 공격형은 화난 눈썹, 겁쟁이는 땀방울, 욕심형은 씩 웃는 입
+  const name = p.pers.name;
+  ctx.strokeStyle = '#1a1020';
+  ctx.lineWidth = 2;
+  if (name === '공격형' || p.mode === 'hunt') {
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + s * 9, y - 9 + bob); ctx.lineTo(x + s * 2, y - 6 + bob); ctx.stroke(); }
+  } else if (name === '겁쟁이') {
+    ctx.fillStyle = '#8fd8ff';
+    ctx.beginPath(); ctx.moveTo(x + 12, y - 12 + bob); ctx.quadraticCurveTo(x + 16, y - 5 + bob, x + 12, y - 4 + bob); ctx.quadraticCurveTo(x + 8, y - 5 + bob, x + 12, y - 12 + bob); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.arc(x, y + 4 + bob, 5, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
 }
 
 // 칸마다 정해진 0~1 값 (물감 번짐이 매 프레임 같은 모양이게)
