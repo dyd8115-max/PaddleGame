@@ -168,9 +168,9 @@ export class Brick {
 export type ItemKind = 'ballX2' | 'ballX3' | 'ballHalf' | 'padLong' | 'padShort';
 export const ITEM_KINDS: ItemKind[] = ['ballX2', 'ballX3', 'ballHalf', 'padLong', 'padShort'];
 export const ITEM_INFO: Record<ItemKind, { label: string; good: boolean }> = {
-  ballX2: { label: '빛×2', good: true },
-  ballX3: { label: '빛×3', good: true },
-  ballHalf: { label: '빛÷2', good: false },
+  ballX2: { label: '공×2', good: true },
+  ballX3: { label: '공×3', good: true },
+  ballHalf: { label: '공÷2', good: false },
   padLong: { label: '방벽×1.5', good: true },
   padShort: { label: '방벽÷3', good: false },
 };
