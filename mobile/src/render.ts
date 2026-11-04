@@ -1284,7 +1284,7 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
   ctx.save();
   ctx.translate(0, menuTop());   // 메뉴 내용은 640 높이 상자로 가운데에
 
-  text(ctx, '블록 브레이커', World.Width / 2, 60, 38, WHITE, { bold: true });
+  text(ctx, '레트로 오락실', World.Width / 2, 60, 38, WHITE, { bold: true });
   text(ctx, '캐릭터를 고르세요', World.Width / 2, 112, 16, GRAY);
 
   for (let i = 0; i < Characters.List.length; i++) {

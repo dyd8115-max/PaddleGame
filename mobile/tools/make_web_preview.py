@@ -14,7 +14,7 @@ css_name = re.search(r'href="\./assets/(index-[^"]+\.css)"', html).group(1)
 js = open(f"{dist}/assets/{js_name}", encoding="utf-8").read().replace("</script", "<\\/script")
 css = open(f"{dist}/assets/{css_name}", encoding="utf-8").read()
 
-page = f"""<title>블록 브레이커</title>
+page = f"""<title>레트로 오락실</title>
 <meta name="theme-color" content="#14161f">
 <style>{css}</style>
 <canvas id="screen"></canvas>

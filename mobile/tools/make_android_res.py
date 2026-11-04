@@ -68,7 +68,7 @@ def splashes():
         y = (h - s) // 2 - round(s * 0.15)
         img.alpha_composite(logo, ((w - s) // 2, y))
         f = ImageFont.truetype(font_path, max(12, round(s * 0.16)), index=1)
-        ImageDraw.Draw(img).text((w / 2, y + s + round(s * 0.2)), "블록 브레이커", font=f, fill=(255, 255, 255), anchor="mm")
+        ImageDraw.Draw(img).text((w / 2, y + s + round(s * 0.2)), "레트로 오락실", font=f, fill=(255, 255, 255), anchor="mm")
         img.convert("RGB").save(p)
     print("splash ok")
 

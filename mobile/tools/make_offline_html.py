@@ -31,7 +31,7 @@ page = f"""<!doctype html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#14161f">
-<title>블록 브레이커</title>
+<title>레트로 오락실</title>
 <style>{css}</style>
 </head>
 <body>

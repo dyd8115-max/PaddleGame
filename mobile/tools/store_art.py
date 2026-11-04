@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 SRC, OUT = sys.argv[1], sys.argv[2]
-TITLE = "블록 브레이커"
+TITLE = "레트로 오락실"
 SUB = "캐릭터를 골라 벽돌을 깨부숴요"
 FONT_TITLE = ("/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc", 1)
 FONT_SUB = ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 1)
