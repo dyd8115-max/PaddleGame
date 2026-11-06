@@ -87,14 +87,17 @@ function drawCharacter(ctx: Ctx, character: number, frame: number, facingLeft: b
     ctx.fillRect(dst.x + dst.w * 0.3, dst.y + dst.h * 0.3, dst.w * 0.4, dst.h * 0.7);
     return;
   }
+  // 칸 비율이 다른 캐릭터(기사는 칼이 뒤로 길어서 넓음)는 높이를 맞추고 가운데 기준으로 넓게
+  const w = dst.h * (cell.sw / cell.sh);
+  const x = dst.centerX - w / 2;
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   if (facingLeft) {
-    ctx.translate(dst.x + dst.w, dst.y);
+    ctx.translate(x + w, dst.y);
     ctx.scale(-1, 1);
-    ctx.drawImage(cell.img, cell.sx, cell.sy, cell.sw, cell.sh, 0, 0, dst.w, dst.h);
+    ctx.drawImage(cell.img, cell.sx, cell.sy, cell.sw, cell.sh, 0, 0, w, dst.h);
   } else {
-    ctx.drawImage(cell.img, cell.sx, cell.sy, cell.sw, cell.sh, dst.x, dst.y, dst.w, dst.h);
+    ctx.drawImage(cell.img, cell.sx, cell.sy, cell.sw, cell.sh, x, dst.y, w, dst.h);
   }
   ctx.restore();
 }
@@ -1354,9 +1357,12 @@ function drawMenu(ctx: Ctx, game: Game, v: View): void {
     const sw = Characters.CellW * 1.2, sh = Characters.CellH * 1.2;
     const dst = new Rect(card.centerX - sw / 2, card.bottom - 26 - sh, sw, sh);
     const frame = sel ? Math.floor(game.menuTime * c.fps) % c.frames : 0;
+    ctx.save();
+    roundRect(ctx, card, 12);
+    ctx.clip();   // 넓은 캐릭터가 카드 밖으로 나가지 않게
     if (!own) ctx.globalAlpha = 0.35;
     drawCharacter(ctx, i, frame, false, dst);
-    ctx.globalAlpha = 1;
+    ctx.restore();
     if (own) {
       text(ctx, c.name, card.centerX, card.bottom - 14, 15, sel ? ITEM_COLOR : WHITE, { bold: true });
     } else {

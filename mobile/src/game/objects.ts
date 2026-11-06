@@ -59,7 +59,7 @@ export const Characters = {
     { id: 'kid', name: '꼬마', fps: 15, sheet: 'characters', row: 0, frames: 16, price: 0, desc: '모자를 쓴 씩씩한 꼬마' },
     { id: 'elf', name: '엘프', fps: 13, sheet: 'characters', row: 1, frames: 16, price: 200, desc: '활을 멘 숲의 엘프' },
     { id: 'saint', name: '성녀', fps: 16, sheet: 'characters', row: 2, frames: 16, price: 200, desc: '빛의 지팡이를 든 성녀' },
-    { id: 'knight', name: '기사', fps: 14, sheet: 'knight', row: 0, frames: 16, price: 500, desc: '붉은 머리의 검사' },
+    { id: 'knight', name: '기사', fps: 15, sheet: 'knight', row: 0, frames: 9, price: 500, desc: '대검을 든 붉은 머리 기사' },
   ] as CharacterDef[],
   indexOf(id: string): number { return Characters.List.findIndex((c) => c.id === id); },
 };
