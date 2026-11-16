@@ -20,32 +20,40 @@ export const PLAYER_SCALE = 1.5;
 // archer:   궁수의 전설처럼 움직이다 멈추면 자동 발사 (지금은 쓰지 않음)
 // survival: 3초마다 벽돌 줄이 위에서 생겨 내려온다. 몇 초 버텼나 (성녀)
 // stage:    패들로 받아 벽돌을 깨고 다음 맵으로 (지금은 쓰지 않음)
-export type GameMode = 'stage' | 'claim' | 'climb' | 'horde' | 'mine' | 'swipe' | 'archer' | 'survival';
+export type GameMode = 'stage' | 'claim' | 'climb' | 'horde' | 'mine' | 'swipe' | 'archer' | 'survival' | 'raid'
+  | 'tower' | 'run' | 'claw';
 
-// 게임 종류. 순서가 곧 최고 기록 저장 번호라서 바꾸면 안 됨 (새 게임은 뒤에 추가)
+// 게임 종류. 최고 기록은 모드 이름으로 저장해서 순서를 바꿔도 됨 (main.ts KEY_BEST)
+export type RecordUnit = 'stage' | 'round' | 'sec' | 'floor' | 'meter' | 'cells' | 'point';
 export interface GameDef {
   mode: GameMode;
-  name: string;       // 메뉴 탭 이름
+  name: string;       // 메뉴 이름
   ability: string;    // 메뉴에 보이는 한 줄 설명
   speedMul: number;   // 공 빠르기 배율
+  unit: RecordUnit;   // 기록 단위
+  price: number;      // 해금 코인 (0 = 처음부터 열림. 지금은 모두 0)
 }
 
 export const Games = {
   List: [
-    { mode: 'claim', name: '땅따먹기', ability: '선을 그어 땅 차지 · 몇 스테이지까지 갈까', speedMul: 1 },
-    { mode: 'swipe', name: '룬 돌 깨기', ability: '화살로 룬 돌 깨기 · 몇 라운드까지 갈까', speedMul: 1 },
-    { mode: 'survival', name: '빛의 방벽', ability: '내려오는 색유리를 몇 초 버틸까', speedMul: 1.5 },
+    { mode: 'claim', name: '땅따먹기', ability: '선을 그어 땅 넓히기 · 몇 스테이지까지 갈까', speedMul: 1, unit: 'stage', price: 0 },
+    { mode: 'swipe', name: '숫자 벽돌깨기', ability: '당겨 쏴서 숫자 벽돌 깨기 · 몇 라운드까지 갈까', speedMul: 1, unit: 'round', price: 0 },
+    { mode: 'survival', name: '벽돌깨기', ability: '공을 튕겨 내려오는 벽돌 깨기 · 몇 초 버틸까', speedMul: 1.5, unit: 'sec', price: 0 },
+    { mode: 'raid', name: '몬스터 버티기', ability: '자동 공격으로 몬스터 떼 막기 · 몇 초 버틸까', speedMul: 1, unit: 'sec', price: 0 },
+    { mode: 'tower', name: '발판 점프', ability: '발판을 밟고 위로 · 몇 층까지 갈까', speedMul: 1, unit: 'floor', price: 0 },
+    { mode: 'run', name: '장애물 달리기', ability: '눌러서 점프 · 얼마나 멀리 갈까', speedMul: 1, unit: 'meter', price: 0 },
+    { mode: 'claw', name: '인형 뽑기', ability: '집게로 옮겨 같은 인형끼리 합치기 · 몇 점까지 갈까', speedMul: 1, unit: 'point', price: 0 },
   ] as GameDef[],
   indexOf(mode: GameMode): number { return Games.List.findIndex((g) => g.mode === mode); },
 };
 
 // 캐릭터는 어느 게임에서든 쓸 수 있는 겉모습. 꼬마는 기본, 나머지는 코인으로 해금
-export type CharacterId = 'kid' | 'elf' | 'saint' | 'knight';
+export type CharacterId = 'kid' | 'elf' | 'saint' | 'knight' | 'horn' | 'demon' | 'zombie';
 export interface CharacterDef {
   id: CharacterId;
   name: string;
   fps: number;        // 걷기 애니메이션 속도
-  sheet: 'characters' | 'knight';   // 그림 파일
+  sheet: 'characters' | 'knight' | 'horn' | 'demon' | 'zombie';   // 그림 파일 (characters 는 세 줄, 나머지는 한 줄짜리 char_<sheet>.png)
   row: number;        // 그림 파일 안의 줄
   frames: number;     // 걷기 장 수
   price: number;      // 해금 코인 (0 = 기본 제공)
@@ -60,6 +68,10 @@ export const Characters = {
     { id: 'elf', name: '엘프', fps: 13, sheet: 'characters', row: 1, frames: 16, price: 200, desc: '활을 멘 숲의 엘프' },
     { id: 'saint', name: '성녀', fps: 16, sheet: 'characters', row: 2, frames: 16, price: 200, desc: '빛의 지팡이를 든 성녀' },
     { id: 'knight', name: '기사', fps: 15, sheet: 'knight', row: 0, frames: 9, price: 500, desc: '대검을 든 붉은 머리 기사' },
+    // ComfyUI 로 만든 걷기 (정면에 가까운 걸음). 좀비는 일부러 느리게 질질 끌며 걸음
+    { id: 'horn', name: '양뿔 모자', fps: 12, sheet: 'horn', row: 0, frames: 16, price: 300, desc: '양뿔 모자를 쓴 푸른 머리 장교' },
+    { id: 'demon', name: '악마 소녀', fps: 9, sheet: 'demon', row: 0, frames: 12, price: 300, desc: '뿔과 꼬리가 달린 악마 소녀' },
+    { id: 'zombie', name: '좀비 소녀', fps: 8, sheet: 'zombie', row: 0, frames: 16, price: 300, desc: '힘없이 발을 끌며 걷는 좀비 소녀' },
   ] as CharacterDef[],
   indexOf(id: string): number { return Characters.List.findIndex((c) => c.id === id); },
 };
@@ -173,8 +185,8 @@ export const ITEM_INFO: Record<ItemKind, { label: string; good: boolean }> = {
   ballX2: { label: '공×2', good: true },
   ballX3: { label: '공×3', good: true },
   ballHalf: { label: '공÷2', good: false },
-  padLong: { label: '방벽×1.5', good: true },
-  padShort: { label: '방벽÷3', good: false },
+  padLong: { label: '막대×1.5', good: true },
+  padShort: { label: '막대÷3', good: false },
 };
 
 export class Item {

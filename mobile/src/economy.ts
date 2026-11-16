@@ -1,5 +1,5 @@
 // 코인과 해금한 캐릭터 (지갑). 한 덩어리로 저장해서 코인을 쓰고 캐릭터를 얻는 일이 반만 저장되는 일이 없게
-import { Characters } from './game/objects';
+import { Characters, Games } from './game/objects';
 import { loadValue, saveValue } from './platform';
 
 export const AD_COINS = 30;      // 상점에서 광고 한 번 보면 받는 코인
@@ -68,6 +68,21 @@ class Wallet {
     if (!c || this.owns(charIndex) || this.d.coins < c.price) return false;
     this.d.coins -= c.price;
     this.d.owned.push(c.id);
+    this.changed();
+    return true;
+  }
+
+  // 게임 해금 (가격 0 이면 처음부터 열림). owned 에 'g:모드' 로 저장
+  ownsGame(gi: number): boolean {
+    const g = Games.List[gi];
+    return !!g && (g.price === 0 || this.d.owned.includes(`g:${g.mode}`));
+  }
+
+  unlockGame(gi: number): boolean {
+    const g = Games.List[gi];
+    if (!g || this.ownsGame(gi) || this.d.coins < g.price) return false;
+    this.d.coins -= g.price;
+    this.d.owned.push(`g:${g.mode}`);
     this.changed();
     return true;
   }

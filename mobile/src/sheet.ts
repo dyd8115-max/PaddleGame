@@ -14,12 +14,12 @@ let current: { root: HTMLElement; opts: SheetOptions } | null = null;
 const CSS = `
 .sheet-back{position:fixed;inset:0;z-index:20;background:rgba(8,10,16,.72);display:flex;align-items:center;justify-content:center;
   padding:calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px);animation:sheetIn .18s ease-out}
-.sheet{width:100%;max-width:440px;max-height:100%;display:flex;flex-direction:column;background:#1e2232;border:1px solid rgba(255,255,255,.12);
-  border-radius:18px;color:#e8e8f0;font-family:"Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
-  box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;user-select:text;-webkit-user-select:text}
+.sheet{width:100%;max-width:440px;max-height:100%;display:flex;flex-direction:column;background:#111219;border:2px solid rgba(255,255,255,.85);
+  border-radius:4px;color:#e8e8f0;font-family:"Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  box-shadow:0 8px 0 rgba(0,0,0,.35);overflow:hidden;user-select:text;-webkit-user-select:text}
 .sheet-head{display:flex;align-items:center;padding:16px 16px 10px 20px;gap:8px}
 .sheet-title{flex:1;font-size:19px;font-weight:700;color:#fff}
-.sheet-x{width:36px;height:36px;border:0;border-radius:10px;background:rgba(255,255,255,.08);color:#fff;font-size:20px;line-height:36px;cursor:pointer}
+.sheet-x{width:36px;height:36px;border:2px solid rgba(255,255,255,.6);border-radius:3px;background:#000;color:#fff;font-size:20px;line-height:36px;cursor:pointer}
 .sheet-body{padding:4px 20px 16px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:15px;line-height:1.6}
 .sheet-body h3{font-size:15px;margin:16px 0 4px;color:#ffd84d}
 .sheet-body p{margin:6px 0}
@@ -27,8 +27,8 @@ const CSS = `
 .sheet-body li{margin:3px 0}
 .sheet-body .muted{color:#9aa0b4;font-size:13px}
 .sheet-foot{display:flex;gap:10px;padding:12px 16px 16px}
-.sheet-btn{flex:1;height:50px;border-radius:14px;border:1px solid rgba(255,255,255,.2);background:#2a3046;color:#fff;font-size:17px;font-weight:700;cursor:pointer;font-family:inherit}
-.sheet-btn.primary{background:#ffd84d;border-color:#ffd84d;color:#1e2232}
+.sheet-btn{flex:1;height:48px;border-radius:3px;border:2px solid rgba(255,255,255,.75);background:#000;color:#fff;font-size:17px;font-weight:700;cursor:pointer;font-family:inherit}
+.sheet-btn.primary{border:3px solid #fff}
 .sheet-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 2px;border-bottom:1px solid rgba(255,255,255,.08);font-size:16px;cursor:pointer}
 .sheet-row:last-child{border-bottom:0}
 .sheet-row .val{color:#9aa0b4;font-size:14px}
@@ -37,8 +37,8 @@ const CSS = `
 .sheet-toggle{width:50px;height:30px;border-radius:15px;background:#3a4058;position:relative;flex:none;transition:background .15s}
 .sheet-toggle::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:#fff;transition:left .15s}
 .sheet-toggle.on{background:#3ccf8e}.sheet-toggle.on::after{left:23px}
-.sheet-chips{display:flex;gap:8px;margin:6px 0 4px}
-.sheet-chip{flex:1;height:42px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:#2a3046;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
+.sheet-chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}
+.sheet-chip{flex:1 1 30%;min-width:96px;height:42px;border-radius:3px;border:2px solid rgba(255,255,255,.75);background:#000;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
 .tut-img{width:100%;border-radius:12px;display:block;margin:4px 0 10px;aspect-ratio:636/600;object-fit:cover;object-position:top;background:#14161f}
 .tut-dots{display:flex;justify-content:center;gap:6px;margin-top:8px}
 .tut-dots i{width:7px;height:7px;border-radius:4px;background:#3a4058}.tut-dots i.on{background:#ffd84d;width:18px}

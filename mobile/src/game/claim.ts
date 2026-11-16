@@ -24,6 +24,10 @@ export const CC = 16;                  // 칸 크기
 export const MAP_COLS = 60;
 export const MAP_ROWS = 90;
 const KID_SPEED = 10;                  // 초당 칸 수 (꼬마는 이 빠르기로 자유롭게 움직임)
+// 카메라 확대: 가까이서 보면 땅이 넓게 느껴짐. 선을 길게 그으면 집이 보이게 살짝 멀어짐
+const ZOOM_NEAR = 1.8;
+const ZOOM_FAR = 1.4;
+const ZOOM_TRAIL = 36;                 // 선이 이 칸 수만큼 길어지면 가장 멀리
 const TURN_RATE = 9;                   // 선을 긋는 중 1초에 돌 수 있는 각도 (라디안). 급하게 꺾어 자기 선을 밟지 않게
 const START_LIVES = 3;
 export const GOAL = 0.5;
@@ -71,6 +75,11 @@ const PERSONALITIES: Personality[] = [
   { name: '욕심형', huntRange: 14, huntSlack: 0.1, fear: 0.8, maxTrail: 42, loop: 1.5, rest: 0.8 },
   { name: '겁쟁이', huntRange: 9, huntSlack: -0.1, fear: 1.5, maxTrail: 16, loop: 0.7, rest: 1.3 },
 ];
+// 3스테이지부터 한 마리는 사냥꾼: 멀리서도 꼬마 선을 노리고, 가까워지면 달려듦
+const HUNTER: Personality = { name: '사냥꾼', huntRange: 48, huntSlack: 0.9, fear: 0.3, maxTrail: 12, loop: 0.6, rest: 0.4 };
+const DASH = 1.4;          // 사냥 중 가까우면 이만큼 빨라짐
+const SHIELD_EVERY = 13;   // 방패가 맵에 나오는 간격 (초)
+const SHIELD_LIFE = 12;
 
 const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -94,14 +103,23 @@ export class Claim {
   stageTime = 0;
   camX = 0;
   camY = 0;
+  zoom = ZOOM_NEAR;                    // 화면 확대 배율 (그릴 때 이만큼 키움)
   flash: { idx: number[]; t: number } = { idx: [], t: 0 };
   counts: number[] = [];                          // 주인별 땅 칸 수
+  // 방패: 맵에 가끔 나옴. 주우면 한 번은 선이 끊겨도 목숨이 줄지 않음
+  shieldItem: { c: number; r: number; t: number } | null = null;
+  shielded = false;
+  shieldPop = 0;                                  // 방패가 막아 줄 때 연출
+  private shieldTimer = 8;
 
   constructor(private host: ClaimHost) { this.startStage(); }
 
   get kid(): Player { return this.players[KID]; }
   get percent(): number { return (this.counts[KID] ?? 0) / (this.cols * this.rows); }
   get mapW(): number { return this.cols * CC; }
+  // 화면에 보이는 땅 크기 (월드 좌표)
+  get viewW(): number { return World.Width / this.zoom; }
+  get viewH(): number { return World.Height / this.zoom; }
   get mapH(): number { return this.rows * CC; }
   get moving(): boolean { return this.kid.dir[0] !== 0 || this.kid.dir[1] !== 0; }
   get drawing(): boolean { return this.kid.trail.length > 0; }
@@ -116,7 +134,7 @@ export class Claim {
   private startStage(): void {
     this.owner.fill(-1);
     this.trail.fill(-1);
-    const n = Math.min(7, this.stage + 2);
+    const n = Math.min(7, this.stage + 3);
     this.players = [];
     this.players.push(this.newPlayer(KID, Math.floor(this.cols / 2), Math.floor(this.rows / 2), KID_HOME));
     for (let i = 1; i <= n; i++) {
@@ -134,11 +152,12 @@ export class Claim {
     for (let y = r - home; y <= r + home; y++) for (let x = c - home; x <= c + home; x++) {
       if (this.inside(x, y) && (x - c) ** 2 + (y - r) ** 2 <= (home + 0.5) ** 2) this.owner[this.idx(x, y)] = id;
     }
-    const devilSpeed = Math.min(10, 7 + this.stage * 0.5);
+    const devilSpeed = Math.min(10.5, 8 + this.stage * 0.5);
+    const hunter = id !== KID && this.stage >= 3 && id === Math.min(7, this.stage + 3);   // 마지막 악마가 사냥꾼
     return {
       id, c, r, x: (c + 0.5) * CC, y: (r + 0.5) * CC, dir: [0, 0], alive: true, respawn: 0, trail: [], leaveC: c, leaveR: r, step: 0,
-      speed: id === KID ? KID_SPEED : devilSpeed, plan: [], mode: 'home', wait: rand(0.2, 1.2),
-      pers: PERSONALITIES[(id - 1 + PERSONALITIES.length) % PERSONALITIES.length], zig: false, target: -1,
+      speed: id === KID ? KID_SPEED : hunter ? devilSpeed + 0.8 : devilSpeed, plan: [], mode: 'home', wait: rand(0.2, 1.2),
+      pers: hunter ? HUNTER : PERSONALITIES[(id - 1 + PERSONALITIES.length) % PERSONALITIES.length], zig: false, target: -1,
     };
   }
 
@@ -194,6 +213,7 @@ export class Claim {
     if (this.hurtTimer > 0) this.hurtTimer -= dt;
 
     this.moveKid(dt);
+    this.updateShield(dt);
 
     for (const p of this.players) {
       if (p.id === KID) continue;
@@ -204,7 +224,8 @@ export class Claim {
       }
       this.think(p, dt);
       if (p.dir[0] !== 0 || p.dir[1] !== 0) {
-        p.step += dt * p.speed;
+        const dash = p.mode === 'hunt' && Math.hypot(this.kid.c - p.c, this.kid.r - p.r) < 9 ? DASH : 1;
+        p.step += dt * p.speed * dash;
         while (p.step >= 1 && p.alive && this.clearTimer <= 0) {
           p.step -= 1;
           this.think(p, 0);
@@ -220,9 +241,37 @@ export class Claim {
     this.follow(dt);
   }
 
+  private updateShield(dt: number): void {
+    this.shieldPop = Math.max(0, this.shieldPop - dt);
+    const kid = this.kid;
+    if (this.shieldItem) {
+      this.shieldItem.t -= dt;
+      if (Math.abs(kid.c - this.shieldItem.c) <= 1 && Math.abs(kid.r - this.shieldItem.r) <= 1 && !this.shielded) {
+        this.shielded = true; this.shieldItem = null; this.host.claim(0);
+      } else if (this.shieldItem.t <= 0) this.shieldItem = null;
+      return;
+    }
+    if (this.shielded) return;
+    this.shieldTimer -= dt;
+    if (this.shieldTimer > 0) return;
+    this.shieldTimer = SHIELD_EVERY * rand(0.8, 1.3);
+    // 꼬마 땅 밖, 꼬마에서 6~16칸 떨어진 빈 곳 (주우러 나가야 함)
+    for (let t = 0; t < 60; t++) {
+      const a = Math.random() * Math.PI * 2, d = rand(6, 16);
+      const c = Math.round(kid.c + Math.cos(a) * d), r = Math.round(kid.r + Math.sin(a) * d);
+      if (!this.inside(c, r) || this.owner[this.idx(c, r)] === KID || this.trail[this.idx(c, r)] >= 0) continue;
+      this.shieldItem = { c, r, t: SHIELD_LIFE };
+      return;
+    }
+  }
+
   private follow(dt: number): void {
-    const tx = Math.max(0, Math.min(this.mapW - World.Width, this.kidX - World.Width / 2));
-    const ty = Math.max(0, Math.min(this.mapH - World.Height, this.kidY - World.Height * 0.55));
+    const want = ZOOM_NEAR - (ZOOM_NEAR - ZOOM_FAR) * Math.min(1, this.kid.trail.length / ZOOM_TRAIL);
+    // 천천히 멀어지고 더 천천히 가까워짐. 땅을 차지한 직후 갑자기 확대되면 앞쪽 화면이 멈칫해 보여서
+    this.zoom += (want - this.zoom) * Math.min(1, dt * (want > this.zoom ? 0.55 : 1.2));
+    const vw = this.viewW, vh = this.viewH;
+    const tx = Math.max(0, Math.min(this.mapW - vw, this.kidX - vw / 2));
+    const ty = Math.max(0, Math.min(this.mapH - vh, this.kidY - vh * 0.55));
     const k = Math.min(1, dt * 8);
     this.camX += (tx - this.camX) * k;
     this.camY += (ty - this.camY) * k;
@@ -343,6 +392,16 @@ export class Claim {
     if (!p || !p.alive) return;
     if (id === KID) {
       if (this.hurtTimer > 0) return;
+      if (this.shielded) {   // 방패가 막아 줌: 선만 지워지고 목숨은 그대로
+        this.shielded = false;
+        this.shieldPop = 0.8;
+        this.clearTrail(p);
+        p.c = p.leaveC; p.r = p.leaveR; p.dir = [0, 0];
+        p.x = (p.c + 0.5) * CC; p.y = (p.r + 0.5) * CC;
+        this.hurtTimer = HURT_PAUSE * 0.6;
+        this.host.hurt();
+        return;
+      }
       this.lives--;
       this.host.hurt();
       this.clearTrail(p);
@@ -400,12 +459,13 @@ export class Claim {
       // 다른 사냥꾼이 노리는 칸 근처는 피함
       const taken = this.players.filter((q) => q !== p && q.alive && q.mode === 'hunt' && q.target >= 0).map((q) => q.target);
       const goal = (i: number) => this.trail[i] === KID && !taken.some((t) => Math.abs(t % this.cols - i % this.cols) + Math.abs(Math.floor(t / this.cols) - Math.floor(i / this.cols)) < 6);
-      let hunt = this.bfs(p, goal, P.huntRange);
-      if (!hunt.dir) hunt = this.bfs(p, (i) => this.trail[i] === KID, P.huntRange);
+      const range = P.huntRange + (this.stage - 1) * 3;
+      let hunt = this.bfs(p, goal, range);
+      if (!hunt.dir) hunt = this.bfs(p, (i) => this.trail[i] === KID, range);
       if (hunt.dir) {
         const iGet = hunt.dist / p.speed, kidGets = this.kidHomeTime();
         const safe = !outside || this.threat(p) / KID_SPEED > this.bfs(p, (i) => this.owner[i] === p.id, 90).dist / p.speed;
-        if (iGet < kidGets + P.huntSlack && safe) { p.mode = 'hunt'; p.target = hunt.target; p.dir = hunt.dir; return; }
+        if (iGet < kidGets + P.huntSlack + (this.stage - 1) * 0.12 && safe) { p.mode = 'hunt'; p.target = hunt.target; p.dir = hunt.dir; return; }
       }
     }
     if (p.mode === 'hunt') { p.mode = outside ? 'return' : 'home'; p.plan = []; p.target = -1; }
@@ -427,7 +487,7 @@ export class Claim {
     // 집에 있음. 막 돌아왔으면 잠깐 쉼 (스테이지가 오를수록 짧게)
     if (p.mode === 'return') {
       p.mode = 'home';
-      p.wait = rand(0.6, 1.4) * P.rest * Math.max(0.25, 1 - 0.15 * (this.stage - 1));
+      p.wait = rand(0.6, 1.4) * P.rest * Math.max(0.2, 0.8 - 0.15 * (this.stage - 1));
     }
     if (p.mode !== 'out' || !p.plan.length) {
       if (p.wait > 0) { p.mode = 'home'; this.wander(p); return; }

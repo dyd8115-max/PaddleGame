@@ -34,7 +34,7 @@ const FAST_AFTER = 8;         // 한 차례가 이 시간(초)보다 길어지�
 const MIN_AIM = 10 * Math.PI / 180;   // 너무 눕혀 쏘지 못하게
 const PULL_MIN = 22;          // 이만큼은 당겨야 조준
 const SLIDE_TIME = 0.22;      // 벽돌이 한 줄 내려오는 시간 (여러 줄이면 조금 더 길게)
-const ROWS_CHANCE = [0.5, 0.3, 0.2];   // 한 차례 뒤 새로 생기는 줄 수 1, 2, 3 의 확률
+const ROWS_CHANCE = [0.38, 0.36, 0.26];   // 한 차례 뒤 새로 생기는 줄 수 1, 2, 3 의 확률
 const NUDGE_AFTER = 6;        // 벽돌을 못 맞히고 벽만 튕기는 시간이 길면 방향을 살짝 바꿈
 
 const randInt = (n: number) => Math.floor(Math.random() * n);
@@ -292,7 +292,7 @@ export class Swipe {
     const count = 1 + randInt(COLS - 1);
     const cols = [...Array(COLS).keys()].sort(() => Math.random() - 0.5);
     for (let i = 0; i < count; i++) {
-      const hp = n >= 5 && Math.random() < 0.2 ? n * 2 : n;
+      const hp = n >= 3 && Math.random() < 0.3 ? n * 2 : n;
       this.bricks.push(new SwipeBrick(cols[i], row, hp));
     }
     // +1 은 새 줄 벽돌 중 하나를 무작위로 '+1 벽돌'로

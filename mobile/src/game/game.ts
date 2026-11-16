@@ -8,6 +8,9 @@ import { Archer } from './archer';
 import { Climb } from './climb';
 import { Horde } from './horde';
 import { Claim } from './claim';
+import { Raid } from './raid';
+import type { MiniGame, MiniHost } from './mini';
+import { MINI_GAMES } from './minis';
 import {
   BALL_SPEED_MUL, BackgroundCount, Ball, Brick, Characters, Devil, DevilSprite, Games, ITEM_INFO, ITEM_KINDS, Item, Paddle, Player, World,
   type BallKind, type ItemKind,
@@ -54,7 +57,7 @@ const ROW_EVERY = 3;        // 이 시간(초)마다 위에서 벽돌 줄이 하
 const START_ROWS = 3;       // 처음에 깔려 있는 줄 수
 const ROW_SHIFT_TIME = 0.2; // 한 줄 내려오는 그림 시간
 const DANGER_ABOVE_PADDLE = 150;   // 패들 위 이 높이에 선. 벽돌이 닿으면 끝
-const SURVIVAL_DEVIL_AT = 30;      // 이 시간(초)부터 악마 등장
+const SURVIVAL_DEVIL_AT = 20;      // 이 시간(초)부터 악마 등장
 const SURVIVAL_ITEM_BRICK = 0.12;  // 새 줄 벽돌이 노란 벽돌일 확률
 
 // 공이 오랫동안 벽돌을 못 깨면 같은 길만 도는 것으로 보고 각도를 살짝 바꾼다
@@ -120,6 +123,8 @@ export class Game {
   archer: Archer | null = null; // 궁수 모드일 때만 (지금은 쓰지 않음)
   climb: Climb | null = null;   // 용암 오르기 (지금은 쓰지 않음)
   claim: Claim | null = null;   // 꼬마 모드일 때만
+  raid: Raid | null = null;     // 괴물 습격일 때만
+  mini: MiniGame | null = null; // 발판 점프 등 미니게임일 때만
   horde: Horde | null = null;   // 꼬마 모드일 때만
   private events_: GameEvent[] = [];
 
@@ -147,6 +152,8 @@ export class Game {
   get record(): number {
     if (this.mode === 'archer') return this.archer ? this.archer.stage : this.lastRecord_;
     if (this.mode === 'claim') return this.claim ? this.claim.stage : this.lastRecord_;
+    if (this.mode === 'raid') return this.raid ? Math.floor(this.raid.time * 10) / 10 : this.lastRecord_;
+    if (MINI_GAMES[this.mode]) return this.mini ? this.mini.record() : this.lastRecord_;
     if (this.mode === 'horde') return this.horde ? Math.floor(this.horde.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'climb') return this.climb ? Math.floor(this.climb.time * 10) / 10 : this.lastRecord_;
     if (this.mode === 'swipe') return this.swipe ? this.swipe.round : this.lastRecord_;
@@ -245,8 +252,13 @@ export class Game {
     this.climb = null;
     this.horde = null;
     this.claim = null;
+    this.raid = null;
+    this.mini = null;
     this.hearts_ = MINE_HEARTS;
-    if (ch.mode === 'claim') this.startClaim();
+    const makeMini = MINI_GAMES[ch.mode];
+    if (makeMini) this.startMini(makeMini);
+    else if (ch.mode === 'claim') this.startClaim();
+    else if (ch.mode === 'raid') this.startRaid();
     else if (ch.mode === 'horde') this.startHorde();
     else if (ch.mode === 'climb') this.startClimb();
     else if (ch.mode === 'swipe') this.startSwipe(save);
@@ -312,6 +324,40 @@ export class Game {
       stageClear: () => { this.score_ += 500; this.events_.push('stageClear'); },
       gameOver: () => this.endGame('gameover'),
     });
+  }
+
+  // 미니게임: 공통 틀로 시작
+  private startMini(make: (host: MiniHost, charIndex: number) => MiniGame): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.mini = make({
+      score: (n) => { this.score_ += n; },
+      event: (e) => this.events_.push(e),
+      gameOver: () => this.endGame('gameover'),
+    }, this.player.character);
+  }
+
+  // 괴물 습격: 자동 공격으로 버티기
+  private startRaid(): void {
+    this.balls = [];
+    this.items = [];
+    this.bricks = [];
+    this.walls = [];
+    this.devil = new Devil();
+    this.serveTimer_ = 0;
+    this.raid = new Raid({
+      hit: (killed) => {
+        if (killed) { this.score_ += 10; this.events_.push('brickBreak'); }
+      },
+      hurt: () => this.events_.push('hurt'),
+      levelUp: () => this.events_.push('levelUp'),
+      pickup: () => this.events_.push('pickup'),
+      gameOver: () => this.endGame('gameover'),
+    }, Characters.List[this.player.character].id);
   }
 
   // 괴물 피하며 싸우기 (지금은 쓰지 않음)
@@ -405,6 +451,32 @@ export class Game {
 
     if (this.state_ !== 'playing') {
       this.menuTime_ += dt;
+      return;
+    }
+
+    if (this.mini) {
+      const m = this.mini;
+      m.update(dt);
+      if (this.mini) {
+        const p = this.player;
+        p.facingLeft = m.facingLeft;
+        const was = p.walking;
+        p.walking = m.moving && !m.dying;
+        if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;
+      }
+      return;
+    }
+
+    if (this.raid) {
+      const r = this.raid;
+      r.update(dt);
+      if (this.raid) {
+        const p = this.player;
+        p.facingLeft = r.facingLeft;
+        const was = p.walking;
+        p.walking = r.moving && r.dying <= 0;
+        if (p.walking) p.animTime += dt; else if (was) p.animTime = 0;
+      }
       return;
     }
 
@@ -531,7 +603,7 @@ export class Game {
     const empty = !this.bricks.some((k) => k.alive);
     if (this.rowTimer_ <= 0 || empty) {
       this.addRow(true);
-      this.rowTimer_ = ROW_EVERY;
+      this.rowTimer_ = Math.max(1.8, ROW_EVERY - this.survivalTime_ / 60);   // 1분마다 1초씩 빨라짐 (가장 빠르면 1.8초)
     }
     if (this.bricks.some((k) => k.alive && k.rect.bottom > this.dangerY)) this.endGame('gameover');
   }
@@ -904,6 +976,8 @@ export class Game {
     }
     if (this.mode === 'swipe' && this.swipe) return Math.max(0, this.swipe.round - 1);
     if (this.mode === 'survival') return Math.floor(this.survivalTime_ / 3);
+    if (this.mini) return this.mini.coins();
+    if (this.mode === 'raid' && this.raid) return Math.floor(this.raid.time / 3) + Math.floor(this.raid.kills / 25);
     return 0;
   }
 
@@ -921,6 +995,8 @@ export class Game {
     this.climb = null;
     this.horde = null;
     this.claim = null;
+    this.raid = null;
+    this.mini = null;
     this.devil.active = false;
     this.state_ = 'menu';
     if (result === 'gameover') this.events_.push('gameOver');

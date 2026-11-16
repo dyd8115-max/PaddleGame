@@ -1,9 +1,10 @@
 // 상점: 캐릭터 해금, 광고 보고 코인, 현금으로 코인 사기
 import { COIN_PACKS } from './adconfig';
 import { rewardedReady, rewardedSupported, showRewarded } from './ads';
-import { characterThumb } from './assets';
+import { assetUrl } from './assetUrl';
+import { characterThumb, gameThumbUrl } from './assets';
 import { AD_COINS, wallet } from './economy';
-import { Characters } from './game/objects';
+import { Characters, Games } from './game/objects';
 import { buy, iapSupported, priceOf } from './iap';
 import { closeSheet, el, isSheetOpen, openSheet } from './sheet';
 
@@ -20,13 +21,32 @@ const CSS = `
 .shop-item{display:flex;align-items:center;gap:12px;padding:10px 2px;border-bottom:1px solid rgba(255,255,255,.08)}
 .shop-item:last-child{border-bottom:0}
 .shop-item img{width:46px;height:55px;object-fit:contain;flex:none}
-.shop-item .ic{width:46px;height:46px;flex:none;display:flex;align-items:center;justify-content:center;font-size:30px}
+.shop-item .ic{width:46px;height:46px;flex:none}
 .shop-item .t{flex:1;min-width:0}
 .shop-item .t b{display:block;font-size:16px}
 .shop-item .t span{display:block;font-size:13px;color:#9aa0b4}
-.shop-buy{flex:none;min-width:84px;height:40px;padding:0 12px;border-radius:12px;border:0;background:#ffd84d;color:#1e2232;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
-.shop-buy.sub{background:#2a3046;color:#fff;border:1px solid rgba(255,255,255,.2)}
-.shop-buy.off{background:#2a3046;color:#7d8296;border:1px solid rgba(255,255,255,.1);cursor:default}
+.shop-buy{flex:none;min-width:80px;height:38px;padding:0 12px;border-radius:3px;border:2px solid #fff;background:#000;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
+.shop-buy.sub{border-color:rgba(255,255,255,.6)}
+.shop-buy.off{background:transparent;color:#7d8296;border-color:transparent;cursor:default}
+.char-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
+.char-card{position:relative;border:2px solid rgba(255,255,255,.3);border-radius:3px;background:#000;padding:8px 6px 10px;text-align:center;cursor:pointer;font-family:inherit;color:#e8e8f0}
+.char-card.sel{border:3px solid #fff;padding:7px 5px 9px}
+.char-card img{display:block;width:96px;height:115px;object-fit:contain;margin:0 auto 4px}
+.char-card.lock img{opacity:.35}
+.char-card b{display:block;font-size:16px}
+.char-card span{display:block;font-size:12px;color:#9aa0b4;line-height:1.4;margin-top:2px;min-height:34px}
+.char-card .st{margin-top:6px;font-size:14px;font-weight:800;color:#9aa0b4}
+.char-card.sel .st{color:#fff}
+.char-card .st.price{color:#f0bf45}
+.game-row{display:flex;align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid rgba(255,255,255,.08);cursor:pointer}
+.game-row:last-child{border-bottom:0}
+.game-row img{width:50px;height:60px;flex:none;object-fit:cover;border:2px solid rgba(255,255,255,.35);border-radius:2px;background:#000}
+.game-row .t{flex:1;min-width:0}
+.game-row .t b{display:block;font-size:16px}
+.game-row .t span{display:block;font-size:13px;color:#9aa0b4}
+.game-row .best{flex:none;font-size:13px;color:#9aa0b4}
+.game-row.sel{background:rgba(255,255,255,.08)}
+.game-row.sel img{border-color:#fff}
 .shop-note{font-size:12px;color:#9aa0b4;line-height:1.5;margin-top:12px}
 .unlock-img{display:block;width:120px;height:144px;object-fit:contain;margin:0 auto 6px}
 `;
@@ -48,7 +68,7 @@ function coinText(n: number): HTMLElement {
 
 function thumb(i: number): HTMLElement {
   const url = characterThumb(i);
-  if (!url) return el('div', 'ic', '🙂');
+  if (!url) return el('div', 'ic');
   const img = el('img');
   img.src = url;
   img.alt = Characters.List[i].name;
@@ -107,7 +127,7 @@ export function openShop(h: ShopHooks): void {
         if (!isSheetOpen() || earned) openShop(h);
       };
     }
-    row.append(el('div', 'ic', '🎬'), t, btn);
+    row.append(t, btn);
     body.appendChild(row);
   }
 
@@ -130,7 +150,7 @@ export function openShop(h: ShopHooks): void {
         else if (r === 'error') message('결제하지 못했어요', '잠시 뒤에 다시 해 주세요. 돈이 빠져나갔는데 코인이 없으면 앱을 다시 켜 주세요.', () => openShop(h));
         else openShop(h);
       };
-      row.append(el('div', 'ic', '💰'), t, btn);
+      row.append(t, btn);
       body.appendChild(row);
     }
     body.appendChild(el('p', 'shop-note',
@@ -175,4 +195,56 @@ export function openUnlock(i: number, h: ShopHooks, back?: () => void): void {
       : [{ label: '닫기', onClick: cancel },
         { label: '상점 가기', primary: true, onClick: () => { closeSheet(false); openShop(h); } }],
   });
+}
+
+// ---------- 캐릭터 고르기 ----------
+// 고른 캐릭터는 홈 화면 가운데에 크게 나옴. 잠긴 캐릭터는 누르면 해금
+export function openCharacters(h: ShopHooks): void {
+  injectCss();
+  const body = el('div');
+  const top = el('div', 'shop-wallet');
+  top.appendChild(coinText(wallet.coins));
+  body.appendChild(top);
+  const grid = el('div', 'char-grid');
+  Characters.List.forEach((c, i) => {
+    const own = wallet.owns(i), sel = h.selected() === i;
+    const card = el('button', 'char-card' + (sel ? ' sel' : '') + (own ? '' : ' lock'));
+    card.appendChild(thumb(i));
+    card.append(el('b', undefined, c.name), el('span', undefined, c.desc));
+    const st = el('div', 'st' + (own ? '' : ' price'));
+    if (own) st.textContent = sel ? '사용 중' : '고르기';
+    else st.appendChild(coinText(c.price));
+    card.appendChild(st);
+    card.onclick = () => {
+      if (own) { h.select(i); closeSheet(false); }
+      else openUnlock(i, h, () => openCharacters(h));
+    };
+    grid.appendChild(card);
+  });
+  body.appendChild(grid);
+  openSheet({ title: '캐릭터', body });
+}
+
+// ---------- 게임 목록 ----------
+export interface GameListHooks {
+  selected: () => number;
+  select: (i: number) => void;
+  best: (i: number) => string;       // 최고 기록 글자 (없으면 '')
+}
+
+export function openGameList(h: GameListHooks): void {
+  injectCss();
+  const body = el('div');
+  Games.List.forEach((g, i) => {
+    const row = el('div', 'game-row' + (h.selected() === i ? ' sel' : ''));
+    const t = el('div', 't');
+    t.append(el('b', undefined, g.name), el('span', undefined, g.ability.split(' · ')[0]));
+    const img = el('img');
+    img.src = assetUrl(gameThumbUrl(g.mode));
+    img.alt = '';
+    row.append(img, t, el('div', 'best', h.best(i)));
+    row.onclick = () => { h.select(i); closeSheet(false); };
+    body.appendChild(row);
+  });
+  openSheet({ title: '게임', body });
 }

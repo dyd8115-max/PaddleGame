@@ -14,7 +14,8 @@ css_name = re.search(r'href="\./assets/(index-[^"]+\.css)"', html).group(1)
 js = open(f"{dist}/assets/{js_name}", encoding="utf-8").read().replace("</script", "<\\/script")
 css = open(f"{dist}/assets/{css_name}", encoding="utf-8").read()
 
-page = f"""<title>레트로 오락실</title>
+page = f"""<meta charset="utf-8">
+<title>레트로 오락실</title>
 <meta name="theme-color" content="#14161f">
 <style>{css}</style>
 <canvas id="screen"></canvas>
@@ -26,6 +27,10 @@ os.makedirs(f"{out}/assets")
 for f in os.listdir(f"{dist}/assets"):
     if f.startswith("index-"):
         continue
-    shutil.copy(f"{dist}/assets/{f}", f"{out}/assets/{f}")
+    src = f"{dist}/assets/{f}"
+    if os.path.isdir(src):   # 하위 폴더 (예: sp/ 미니게임 그림)
+        shutil.copytree(src, f"{out}/assets/{f}")
+    else:
+        shutil.copy(src, f"{out}/assets/{f}")
 open(f"{out}/index.html", "w", encoding="utf-8").write(page)
 print("page", len(page) // 1024, "KB,", len(os.listdir(f"{out}/assets")), "asset files")

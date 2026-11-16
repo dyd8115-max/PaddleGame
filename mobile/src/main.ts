@@ -1,10 +1,10 @@
 // 시작점: 화면 크기 맞추기, 입력, 게임 루프, 소리, 저장, 앱인토스 이벤트
 import { Audio, type SoundName } from './audio';
-import { loadImages } from './assets';
+import { loadImages, loading } from './assets';
 import { Game, type GameEvent } from './game/game';
 import type { SwipeSave } from './game/swipe';
 import { Vec2 } from './game/geometry';
-import { Characters, Games, menuTop } from './game/objects';
+import { Games, menuTop } from './game/objects';
 import { makeLayout, toWorld, type Layout } from './layout';
 import {
   closeApp, getInsets, haptic, keepScreenOn, leaderboardAvailable, loadUserKey, loadValue, onAppState, onBack, onInsetsChange,
@@ -13,12 +13,13 @@ import {
 import { hasTutorial, openSettings, openTutorial } from './appinfo';
 import { isSheetOpen, sheetBack } from './sheet';
 import type { GameMode } from './game/objects';
-import { render } from './render';
+import { formatRecord, render, renderLoading } from './render';
 import { initAds, rewardedReady, rewardedSupported, showRewarded } from './ads';
 import { wallet } from './economy';
 import { initIap } from './iap';
-import { openShop, openUnlock, type ShopHooks } from './shop';
+import { openCharacters, openGameList, openShop, type GameListHooks, type ShopHooks } from './shop';
 import { UI, type Overlay } from './ui';
+import { arcadeDrag, arcadePress, arcadeSwitch, arcadeTilt } from './draw/arcade';
 
 const canvas = document.getElementById('screen') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -27,13 +28,37 @@ const audio = new Audio();
 
 let rawInsets: Insets = getInsets();
 let rect = canvas.getBoundingClientRect();
-let layout: Layout = makeLayout(Math.max(1, rect.width), Math.max(1, rect.height), window.devicePixelRatio || 1, rawInsets);
+// 화면 배율 상한: 기본 2배. 프레임이 계속 느리면 한 단계씩 낮춤 (2 → 1.5 → 1.25 → 1).
+// 낮춘 값은 기억해 두되, 다음에 켤 때는 한 단계 위에서 다시 재 봄 (잠깐 버벅인 것 때문에 계속 흐리지 않게)
+const DPR_STEPS = [2, 1.5, 1.25, 1];
+let dprCap = 2;
+try {
+  const v = Number(localStorage.getItem('dprCap'));
+  const i = DPR_STEPS.indexOf(v);
+  if (i > 0) dprCap = DPR_STEPS[i - 1];
+} catch { /* 저장소를 못 쓰면 기본값 */ }
+let perfAvg = 16, perfSlow = 0, perfHold = 3;   // 평균 프레임 시간(ms), 느린 채로 흐른 시간, 재기 전 기다림
+function watchPerf(rawDt: number): void {
+  if (document.hidden || rawDt > 0.25 || isSheetOpen()) { perfHold = 1; return; }
+  if (perfHold > 0) { perfHold -= rawDt; return; }
+  perfAvg += (rawDt * 1000 - perfAvg) * 0.06;
+  perfSlow = perfAvg > 24 ? perfSlow + rawDt : Math.max(0, perfSlow - rawDt * 2);
+  const i = DPR_STEPS.indexOf(dprCap);
+  if (perfSlow > 1.5 && i >= 0 && i < DPR_STEPS.length - 1 && (window.devicePixelRatio || 1) > DPR_STEPS[i + 1]) {
+    dprCap = DPR_STEPS[i + 1];
+    perfSlow = 0; perfAvg = 16; perfHold = 2;
+    try { localStorage.setItem('dprCap', String(dprCap)); } catch { /* 무시 */ }
+    resize();
+  }
+}
+let layout: Layout = makeLayout(Math.max(1, rect.width), Math.max(1, rect.height), Math.min(window.devicePixelRatio || 1, dprCap), rawInsets);
 let overlay: Overlay = 'none';
 let clock = 0;
 
 // ---------- 저장 ----------
-// 게임별 최고 기록 (예전 캐릭터 번호와 같은 키: 0 땅따먹기, 1 룬 돌 깨기, 2 빛의 방벽)
-const KEY_BEST = (gi: number) => ['best0s', 'best1r', 'best2'][gi];
+// 게임별 최고 기록 키: 처음 네 게임은 예전 키 그대로, 나머지는 모드 이름으로 (게임을 빼거나 넣어도 안 밀리게)
+const LEGACY_BEST: Partial<Record<GameMode, string>> = { claim: 'best0s', swipe: 'best1r', survival: 'best2', raid: 'best3' };
+const KEY_BEST = (gi: number) => { const m = Games.List[gi].mode; return LEGACY_BEST[m] ?? `best_${m}`; };
 const KEY_ELF_SAVE = 'swipeSave';   // 스와이프 모드(엘프) 중간 저장
 let elfSave: SwipeSave | null = null;
 let savedRound = 0;   // 마지막으로 저장한 라운드 (같은 라운드는 다시 저장하지 않음)
@@ -91,7 +116,7 @@ async function loadSaved(): Promise<void> {
 // ---------- 화면 크기 ----------
 // 캔버스가 화면 전체가 아닐 수도 있어서(웹 미리보기 등) 캔버스 자체 크기를 기준으로 맞춘다
 function resize(): void {
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const dpr = Math.min(window.devicePixelRatio || 1, dprCap);   // 3배 화면은 그릴 점이 너무 많아 느려짐 → 2배까지, 느린 기기는 더 낮춤
   rect = canvas.getBoundingClientRect();
   const w = Math.max(1, rect.width), h = Math.max(1, rect.height);
   canvas.width = Math.round(w * dpr);
@@ -120,7 +145,7 @@ const ly = (e: { clientY: number }) => e.clientY - rect.top;
 // 엘프(스와이프)는 중간 저장이 있으면 이어서 (fresh 면 처음부터)
 function start(fresh = false): void {
   if (game.state !== 'menu' || isSheetOpen()) return;
-  // 처음 하는 캐릭터면 규칙 안내부터
+  // 처음 하는 게임이면 규칙 안내부터
   const mode = Games.List[game.selectedGame].mode;
   if (hasTutorial(mode) && !tutSeen.has(mode)) {
     openTutorial(mode, () => {
@@ -146,6 +171,8 @@ function pause(): void {
   game.archer?.joyEnd();
   game.horde?.joyEnd();
   game.claim?.joyEnd();
+  game.raid?.joyEnd();
+  game.mini?.up(0, 0, false);
   if (game.horde) game.horde.keyDir = new Vec2();
   climbHeld.clear();
   game.climb?.release();
@@ -201,10 +228,24 @@ const shopHooks: ShopHooks = {
   reward: () => { audio.play('clear'); if (vibration) haptic('success'); },
 };
 
-function tapCharacter(i: number): void {
-  if (wallet.owns(i)) { shopHooks.select(i); if (vibration) haptic('tickWeak'); }
-  else openUnlock(i, shopHooks);
+// 게임 고르기 (모두 무료)
+function pickGame(i: number): void {
+  if (i !== game.selectedGame) arcadeSwitch();   // 게임기 화면이 지지직
+  game.selectGame(i);
+  void saveValue(KEY_GAME, String(i));
+  if (vibration) haptic('tickWeak');
 }
+// 조이스틱으로 옆 게임 (기울어지는 모습도)
+function stepGame(dir: number): void {
+  const n = Games.List.length;
+  arcadeTilt(dir);
+  pickGame((game.selectedGame + dir + n) % n);
+}
+const gameListHooks: GameListHooks = {
+  selected: () => game.selectedGame,
+  select: (i) => pickGame(i),
+  best: (i) => { const b = game.bestRecord(i); return b > 0 ? formatRecord(Games.List[i].mode, b) : ''; },
+};
 
 let adBusy = false;
 async function watchBonusAd(): Promise<void> {
@@ -295,12 +336,23 @@ function claimKeyDir(): void {
 }
 // 꼬마 땅따먹기: 끌어서 움직이기
 function claimActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.claim !== null; }
+// 미니게임: 입력을 그대로 넘김
+function miniActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.mini !== null; }
+// 괴물 습격: 끌어서 걷기, 레벨 업 카드는 눌러서 고르기
+function raidActive(): boolean { return game.state === 'playing' && overlay === 'none' && game.raid !== null; }
+const raidKeys = new Set<string>();
+function raidKeyDir(): void {
+  if (!game.raid) return;
+  game.raid.keyDir = [(raidKeys.has('ArrowRight') ? 1 : 0) - (raidKeys.has('ArrowLeft') ? 1 : 0), (raidKeys.has('ArrowDown') ? 1 : 0) - (raidKeys.has('ArrowUp') ? 1 : 0)];
+}
 // 꼬마 모드(괴물)도 같은 조작
+let joyGrab = false;   // 홈: 조이스틱을 잡고 있는지
 function joyMode() { return game.archer ?? game.horde; }
 function archerActive(): boolean { return game.state === 'playing' && overlay === 'none' && joyMode() !== null; }
 
 canvas.addEventListener('pointerdown', (e) => {
   audio.unlock();   // 휴대폰은 첫 터치 뒤에야 소리를 낼 수 있음
+  if (!booted) return;
   if (climbPress(e)) return;
   if (activePointer !== -1 && e.pointerType === 'touch') return;   // 두 번째 손가락은 무시
   activePointer = e.pointerId;
@@ -315,9 +367,26 @@ canvas.addEventListener('pointerdown', (e) => {
   flagTap = false;
   // 메뉴: 오른쪽 위 톱니바퀴 = 설정
   if (game.state === 'menu' && overlay === 'none' && layout.soundBtn.contains(lx(e), ly(e))) { showSettings(); return; }
+  if (game.state === 'menu') {
+    const p = toWorld(layout, lx(e), ly(e)), my = p.y - menuTop();
+    joyGrab = overlay === 'none' && (UI.gamePrev.contains(p.x, my) || UI.gameNext.contains(p.x, my));
+  }
   if (claimActive()) {
     if (hudSoundRect().contains(lx(e), ly(e))) { toggleMute(); return; }
     game.claim!.joyBegin(lx(e), ly(e));
+    return;
+  }
+  if (miniActive()) {
+    if (hudSoundRect().contains(lx(e), ly(e))) { toggleMute(); return; }
+    const p = toWorld(layout, lx(e), ly(e));
+    game.mini!.down(p.x, p.y, lx(e), ly(e));
+    return;
+  }
+  if (raidActive()) {
+    if (hudSoundRect().contains(lx(e), ly(e))) { toggleMute(); return; }
+    const r = game.raid!;
+    if (r.choosing) { const p = toWorld(layout, lx(e), ly(e)); r.pick(p.x, p.y); }
+    else r.joyBegin(lx(e), ly(e));
     return;
   }
 
@@ -350,9 +419,18 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   // 마우스는 누르지 않아도 따라오고, 터치는 누른 손가락만
   if (e.pointerType === 'touch' && e.pointerId !== activePointer) return;
+  if (game.state === 'menu' && joyGrab && e.pointerId === activePointer) { arcadeDrag((lx(e) - downX) / (44 * layout.scale)); return; }
   if (claimActive()) {
     // 땅따먹기: 누른 채 끌면 그 방향으로 걷고, 떼면 멈춤
     if (e.pointerId === activePointer) game.claim!.joyMove(lx(e), ly(e));
+    return;
+  }
+  if (miniActive()) {
+    if (e.pointerId === activePointer) { const p = toWorld(layout, lx(e), ly(e)); game.mini!.move(p.x, p.y, lx(e), ly(e)); }
+    return;
+  }
+  if (raidActive()) {
+    if (e.pointerId === activePointer) game.raid!.joyMove(lx(e), ly(e));
     return;
   }
   if (archerActive()) {
@@ -387,14 +465,17 @@ function onTap(x: number, y: number): void {
     return;
   }
   if (game.state === 'menu') {
-    for (let i = 0; i < Characters.List.length; i++) if (UI.charCard(i).contains(w.x, w.y)) { tapCharacter(i); return; }
-    for (let i = 0; i < Games.List.length; i++) if (UI.gameTab(i).contains(w.x, w.y)) { game.selectGame(i); void saveValue(KEY_GAME, String(i)); return; }
+    if (UI.charBtn.contains(w.x, w.y)) { openCharacters(shopHooks); return; }
+    if (UI.gamePrev.contains(w.x, w.y)) { stepGame(-1); return; }
+    if (UI.gameNext.contains(w.x, w.y)) { stepGame(1); return; }
+    if (elfSave && Games.List[game.selectedGame].mode === 'swipe' && UI.newGame(adOffer > 0).contains(w.x, w.y)) { start(true); return; }
+    if (UI.gameBox.contains(w.x, w.y)) { openGameList(gameListHooks); return; }
     const ranking = leaderboardAvailable();
-    if (UI.start.contains(w.x, w.y)) start();
-    else if (UI.coin.contains(w.x, w.y) || UI.shop(ranking).contains(w.x, w.y)) openShop(shopHooks);
+    if (UI.start.contains(w.x, w.y)) { arcadePress('start'); window.setTimeout(() => start(), 140); }   // 버튼이 눌리는 게 보이고 나서 시작
+    else if (UI.listBtn.contains(w.x, w.y)) { arcadePress('list'); openGameList(gameListHooks); }
+    else if (UI.coin.contains(w.x, w.y)) openShop(shopHooks);
     else if (adOffer > 0 && UI.adBonus.contains(w.x, w.y)) void watchBonusAd();
-    else if (elfSave && Games.List[game.selectedGame].mode === 'swipe' && UI.newGame(adOffer > 0).contains(w.x, w.y)) start(true);
-    else if (ranking && UI.ranking.contains(w.x, w.y)) void openLeaderboard();
+    else if (ranking && UI.ranking.contains(w.x, w.y)) { arcadePress('rank'); void openLeaderboard(); }
   }
 }
 
@@ -404,6 +485,13 @@ function endPointer(e: PointerEvent): void {
   activePointer = -1;
 
   if (claimActive()) { game.claim!.joyEnd(); return; }
+  if (raidActive()) { game.raid!.joyEnd(); return; }
+  if (miniActive()) {
+    const p = toWorld(layout, lx(e), ly(e));
+    const tap = e.type === 'pointerup' && Math.hypot(lx(e) - downX, ly(e) - downY) < 12 && performance.now() - downAt < 400;
+    game.mini!.up(p.x, p.y, tap);
+    return;
+  }
   if (archerActive()) { joyMode()!.joyEnd(); return; }
   if (swipeActive()) {
     if (e.type === 'pointerup') game.swipe!.aimRelease();
@@ -411,6 +499,13 @@ function endPointer(e: PointerEvent): void {
     return;
   }
   const moved = Math.hypot(lx(e) - downX, ly(e) - downY);
+  if (game.state === 'menu') {
+    arcadeDrag(0);
+    const dx = lx(e) - downX, dy = ly(e) - downY;
+    // 조이스틱을 잡고 밀면 민 쪽으로, 다른 곳은 넘기듯 (왼쪽으로 밀면 다음)
+    if (e.type === 'pointerup' && overlay === 'none' && !isSheetOpen() && Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.4) { stepGame((joyGrab ? dx > 0 : dx < 0) ? 1 : -1); joyGrab = false; return; }
+    joyGrab = false;
+  }
   if (e.type === 'pointerup' && moved < 12 && performance.now() - downAt < 600) onTap(lx(e), ly(e));
 }
 canvas.addEventListener('pointerup', endPointer);
@@ -420,18 +515,24 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 // 키보드 (PC 브라우저에서 확인할 때)
 window.addEventListener('keydown', (e) => {
   audio.unlock();
+  if (!booted) return;
   if (isSheetOpen()) { if (e.key === 'Escape') sheetBack(); return; }
   if (e.key === 'm' || e.key === 'M') toggleMute();
   else if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
     if (overlay === 'pause') overlay = 'none'; else pause();
   } else if (game.state === 'menu' && overlay === 'none') {
     if (e.key === ' ' || e.key === 'Enter') start();
-    else if (e.key === 'ArrowLeft') game.moveSelection(-1);
-    else if (e.key === 'ArrowRight') game.moveSelection(1);
-    else if (e.key >= '1' && e.key <= '9') { const i = Number(e.key) - 1; if (i < Characters.List.length) tapCharacter(i); }
+    else if (e.key === 'ArrowLeft') stepGame(-1);
+    else if (e.key === 'ArrowRight') stepGame(1);
+    else if (e.key === 'c' || e.key === 'C') openCharacters(shopHooks);
   } else if (overlay === 'pause' && (e.key === ' ' || e.key === 'Enter')) overlay = 'none';
   else if (game.claim && overlay === 'none') {   // 땅따먹기: 방향키를 누르고 있는 동안 걸음
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { claimKeys.add(e.key); claimKeyDir(); }
+  }
+  else if (game.mini && overlay === 'none') { if (!e.repeat) game.mini.key(e.key, true); }
+  else if (game.raid && overlay === 'none') {   // 괴물 습격: 방향키로 걷기, 1~3 으로 카드 고르기
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { raidKeys.add(e.key); raidKeyDir(); }
+    else if (game.raid.choosing && e.key >= '1' && e.key <= '3') { const c = game.raid.cardRect(Number(e.key) - 1); game.raid.pick(c.x + 1, c.y + 1); }
   }
   else if (game.horde && overlay === 'none') {   // 꼬마: 방향키로 이동
     const k = game.horde.keyDir;
@@ -448,6 +549,8 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => {
   if (game.claim && claimKeys.delete(e.key)) claimKeyDir();
+  if (game.raid && raidKeys.delete(e.key)) raidKeyDir();
+  game.mini?.key(e.key, false);
   if (game.horde) {
     const k = game.horde.keyDir;
     if ((e.key === 'ArrowLeft' && k.x < 0) || (e.key === 'ArrowRight' && k.x > 0)) k.x = 0;
@@ -480,11 +583,25 @@ onBack(() => {
 // ---------- 게임 루프 ----------
 let last = performance.now();
 let lastBrickSound = -1;
+// 로딩: 그림과 저장값을 다 불러올 때까지 로딩 화면, 끝나면 홈으로 살짝 사라지며 넘어감
+let bootDone = false, booted = false, bootFade = 0, bootShown = 0;
+const BOOT_FADE = 0.3;
 function frame(now: number): void {
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const rawDt = (now - last) / 1000;
+  const dt = Math.min(0.1, rawDt);
   last = now;
   clock += dt;
 
+  if (!booted) {
+    const target = bootDone ? 1 : loading.total > 0 ? loading.done / loading.total * 0.95 : 0;
+    bootShown += (target - bootShown) * Math.min(1, dt * 12);
+    if (bootDone && bootShown > 0.97 && clock > 0.4) { booted = true; bootFade = BOOT_FADE; }
+    renderLoading(ctx, layout, bootShown, clock);
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  watchPerf(rawDt);
   if (overlay === 'none') game.update(dt);
   else if (game.state === 'menu') game.update(dt);   // 메뉴 카드 움직임은 계속
 
@@ -521,10 +638,10 @@ function frame(now: number): void {
     elfSaveRound: elfSave ? elfSave.round : 0,
     time: clock,
     coins: wallet.coins,
-    owned: (i) => wallet.owns(i),
     adOffer,
     adReady: rewardedReady(),
   });
+  if (bootFade > 0) { renderLoading(ctx, layout, 1, clock, bootFade / BOOT_FADE); bootFade -= dt; }
   requestAnimationFrame(frame);
 }
 
@@ -536,9 +653,12 @@ if (import.meta.env.DEV) {
   w.__game = game;
   w.__audio = audio;
   w.__layout = () => layout;
+  (window as unknown as { __games: typeof Games.List }).__games = Games.List;
 }
 
 resize();
-void loadSaved().then(() => { initAds(); return initIap(); });
-void loadImages();
+const saved = loadSaved();
+void saved.then(() => { initAds(); return initIap(); });
+void Promise.all([saved.catch(() => undefined), loadImages()]).then(() => { bootDone = true; });
+setTimeout(() => { bootDone = true; }, 10000);   // 너무 오래 걸리면 그냥 시작 (없는 그림은 대신 그림)
 requestAnimationFrame((t) => { last = t; frame(t); });
